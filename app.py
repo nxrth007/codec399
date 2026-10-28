@@ -208,6 +208,34 @@ def decide_registration(email, decision):
     return jsonify({"email": email.strip().lower(), "decision": decision})
 
 
+@app.get("/api/gallery")
+def gallery():
+    """Finished videos grouped by uploader: one folder per active user account, plus a folder
+    for any other uploader (admins, or jobs from before accounts existed)."""
+    _admin_only()
+    folders = {}
+    for acct in auth.accounts():
+        if acct["status"] == "active" and acct["role"] == "user":
+            folders[acct["email"]] = {"email": acct["email"], "portfolio_id": acct["portfolio_id"],
+                                      "role": "user", "videos": [], "in_progress": 0}
+    known = {a["email"]: a for a in auth.accounts()}
+    with lock:
+        snapshot = [_public(j) for j in jobs.values()]
+    for j in snapshot:
+        owner = j.get("owner") or ""
+        if owner not in folders:
+            acct = known.get(owner)
+            folders[owner] = {"email": owner, "portfolio_id": acct["portfolio_id"] if acct else None,
+                              "role": acct["role"] if acct else None, "videos": [], "in_progress": 0}
+        if j["status"] == "done":
+            folders[owner]["videos"].append(j)
+        elif j["status"] in ("queued", "processing"):
+            folders[owner]["in_progress"] += 1
+    for f in folders.values():
+        f["videos"].sort(key=lambda j: j["created"], reverse=True)
+    return jsonify(sorted(folders.values(), key=lambda f: (f["email"] == "", f["email"])))
+
+
 @app.get("/api/jobs")
 def list_jobs():
     _admin_only()

@@ -107,6 +107,12 @@ def register(email, password, portfolio_id):
         _save_users(users)
 
 
+def accounts():
+    """Every account, without password hashes, sorted by email."""
+    users = load_users()
+    return sorted((_public(e, u) for e, u in users.items()), key=lambda r: r["email"])
+
+
 def pending():
     """Registrations waiting for a decision, oldest first."""
     users = load_users()

@@ -16,6 +16,7 @@
     color-scheme:dark;
   }
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   body {
     margin:0; background:var(--bg); color:var(--text); font:14px/1.6 var(--mono);
     padding-left:max(16px, env(safe-area-inset-left, 0px)); padding-right:max(16px, env(safe-area-inset-right, 0px));
@@ -70,6 +71,21 @@
   button.no:hover { background:var(--accent); color:#fff; }
   button:focus-visible, a.dl:focus-visible { outline:2px solid var(--text); outline-offset:3px; }
   .empty { color:var(--muted); padding:36px 0; text-align:center; font-size:13px; }
+  .folders { display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:26px 22px; padding-top:12px; }
+  .folder { position:relative; background:#050505; border:1px solid var(--line); border-radius:3px; padding:30px 20px 20px; min-height:180px;
+    cursor:pointer; text-align:left; font:inherit; color:var(--text); display:grid; align-content:end; gap:4px; transition:border-color .15s, transform .15s; }
+  .folder::before { content:""; position:absolute; top:-11px; left:-1px; width:40%; height:12px; background:#050505; border:1px solid var(--line); border-bottom:0; border-radius:3px 3px 0 0; }
+  .folder:hover, .folder:focus-visible { border-color:var(--muted); transform:translateY(-2px); outline:none; }
+  .folder:hover::before, .folder:focus-visible::before { border-color:var(--muted); }
+  .folder .email { font-weight:500; overflow-wrap:anywhere; }
+  .folder .pid { color:var(--muted); font-size:12px; letter-spacing:.04em; overflow-wrap:anywhere; }
+  .folder .count { color:var(--muted); font-size:12px; margin-top:12px; }
+  .folder .count em { color:var(--accent); font-style:normal; }
+  .crumb { display:flex; align-items:baseline; gap:16px; margin-bottom:18px; flex-wrap:wrap; }
+  .crumb button { background:none; border:0; color:var(--muted); font:inherit; cursor:pointer; padding:0; letter-spacing:.06em; }
+  .crumb button:hover { color:var(--text); }
+  .crumb .title { font-weight:500; overflow-wrap:anywhere; }
+  .crumb .pid { color:var(--muted); font-size:12px; }
   dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; margin:12px 0 0; font-size:13px; }
   dt { color:var(--muted); } dd { margin:0; min-width:0; overflow-wrap:anywhere; }
   @media (max-width: 480px) { dl { grid-template-columns:1fr; gap:0 } dt { margin-top:6px; } }
@@ -90,6 +106,7 @@
     <button data-tab="processing">Processing<span class="badge" id="badge-processing">0</span></button>
     <button data-tab="finished">Finished<span class="badge" id="badge-finished">0</span></button>
     <button data-tab="approval">Approval<span class="badge" id="badge-approval">0</span></button>
+    <button data-tab="gallery">Gallery<span class="badge" id="badge-gallery">0</span></button>
   </nav>
 
   <section id="tab-upload" class="active">
@@ -111,6 +128,7 @@
   <section id="tab-processing"><div id="processing-list"></div></section>
   <section id="tab-finished"><div id="finished-list"></div></section>
   <section id="tab-approval"><div id="approval-list"></div></section>
+  <section id="tab-gallery"><div id="gallery-folders" class="folders"></div><div id="gallery-folder" hidden></div></section>
 </main>
 
 <script>
@@ -193,12 +211,36 @@ function card(j) {
   return `<div class="card">${body}</div>`;
 }
 
+let openFolder = null;
+function folderTile(f) {
+  const n = f.videos.length;
+  const label = f.email || 'Unassigned';
+  const pid = f.portfolio_id ? esc(f.portfolio_id) : (f.role === 'admin' ? 'admin' : (f.email ? 'no Business Portfolio ID' : 'uploads from before accounts'));
+  const prog = f.in_progress ? ` · <em>${f.in_progress} in progress</em>` : '';
+  return `<button class="folder" data-email="${esc(f.email)}" aria-label="Open folder ${esc(label)}"><div class="email">${esc(label)}</div><div class="pid">${pid}</div><div class="count">${n} video${n === 1 ? '' : 's'}${prog}</div></button>`;
+}
+function folderView(f) {
+  const label = f.email || 'Unassigned';
+  const head = `<div class="crumb"><button type="button" id="gallery-back">&larr; Gallery</button><span class="title">${esc(label)}</span>${f.portfolio_id ? `<span class="pid">${esc(f.portfolio_id)}</span>` : ''}</div>`;
+  const body = f.videos.length ? f.videos.map(card).join('') : `<div class="empty">No finished videos in this folder yet${f.in_progress ? `, ${f.in_progress} in progress` : ''}.</div>`;
+  return head + body;
+}
+
 function approvalCard(r) {
   return `<div class="card">
     <div class="top"><div class="name" title="${esc(r.email)}">${esc(r.email)}</div><div class="meta">registered ${esc(fmtDate(r.created))}</div></div>
     <dl><dt>Business Portfolio ID</dt><dd>${esc(r.portfolio_id || '')}</dd></dl>
     <div class="actions"><button class="ok" data-email="${esc(r.email)}" data-decision="approve">Accept</button><button class="no" data-email="${esc(r.email)}" data-decision="decline">Decline</button></div>
   </div>`;
+}
+
+function renderGallery(folders) {
+  const current = openFolder === null ? null : folders.find(f => f.email === openFolder);
+  if (openFolder !== null && !current) openFolder = null;
+  $('#gallery-folders').hidden = !!current;
+  $('#gallery-folder').hidden = !current;
+  const tiles = folders.length ? folders.map(folderTile).join('') : '<div class="empty">No folders yet. A folder appears for each approved user.</div>';
+  return render('#gallery-folders', tiles) | render('#gallery-folder', current ? folderView(current) : '');
 }
 
 function render(sel, html) {
@@ -209,31 +251,35 @@ function render(sel, html) {
 }
 
 async function refresh() {
-  let list, pending;
+  let list, pending, folders;
   try {
-    const [a, b] = await Promise.all([fetch('/api/jobs'), fetch('/api/registrations')]);
-    if (a.status === 401 || b.status === 401) { location.href = '/login?next=/'; return; }
-    list = await a.json(); pending = await b.json();
+    const [a, b, c] = await Promise.all([fetch('/api/jobs'), fetch('/api/registrations'), fetch('/api/gallery')]);
+    if (a.status === 401 || b.status === 401 || c.status === 401) { location.href = '/login?next=/'; return; }
+    list = await a.json(); pending = await b.json(); folders = await c.json();
   } catch (e) { return; }
   const active = list.filter(j => j.status === 'queued' || j.status === 'processing');
   const done = list.filter(j => j.status === 'done' || j.status === 'error');
   // Only touch the DOM when a list's content changes, so buttons keep focus and hover between polls.
-  const changed = render('#processing-list', active.length ? active.map(card).join('') : '<div class="empty">Nothing is processing.</div>')
+  render('#processing-list', active.length ? active.map(card).join('') : '<div class="empty">Nothing is processing.</div>')
     | render('#finished-list', done.length ? done.map(card).join('') : '<div class="empty">No finished videos yet.</div>')
-    | render('#approval-list', pending.length ? pending.map(approvalCard).join('') : '<div class="empty">No registrations waiting.</div>');
+    | render('#approval-list', pending.length ? pending.map(approvalCard).join('') : '<div class="empty">No registrations waiting.</div>')
+    | renderGallery(folders);
   $('#badge-processing').textContent = active.length;
   $('#badge-finished').textContent = done.filter(j => j.status === 'done').length;
   const ab = $('#badge-approval'); ab.textContent = pending.length; ab.classList.toggle('hot', pending.length > 0);
-  if (!changed) return;
-  document.querySelectorAll('button.rm').forEach(b => b.addEventListener('click', async () => {
-    await fetch('/api/jobs/' + b.dataset.id, { method: 'DELETE' }); refresh();
-  }));
-  document.querySelectorAll('#approval-list button[data-decision]').forEach(b => b.addEventListener('click', async () => {
-    b.disabled = true;
-    await fetch('/api/registrations/' + encodeURIComponent(b.dataset.email) + '/' + b.dataset.decision, { method: 'POST' });
-    refresh();
-  }));
+  $('#badge-gallery').textContent = folders.reduce((n, f) => n + f.videos.length, 0);
 }
+
+// One delegated handler: lists are re-rendered only when they change, so per-element listeners would pile up.
+document.addEventListener('click', async (e) => {
+  const rm = e.target.closest('button.rm');
+  if (rm) { rm.disabled = true; await fetch('/api/jobs/' + rm.dataset.id, { method: 'DELETE' }); refresh(); return; }
+  const dec = e.target.closest('#approval-list button[data-decision]');
+  if (dec) { dec.disabled = true; await fetch('/api/registrations/' + encodeURIComponent(dec.dataset.email) + '/' + dec.dataset.decision, { method: 'POST' }); refresh(); return; }
+  const folder = e.target.closest('#gallery-folders .folder');
+  if (folder) { openFolder = folder.dataset.email; refresh(); return; }
+  if (e.target.closest('#gallery-back')) { openFolder = null; refresh(); }
+});
 refresh();
 setInterval(refresh, 1000);
 </script>
