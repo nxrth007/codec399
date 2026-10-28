@@ -101,7 +101,23 @@ def main(path):
     key_idx = [i for i, f in enumerate(flags) if f.startswith("K")]
     expected_keys = list(range(0, n, pipeline.KEYFRAME_SLOTS))
     print(f"keyframes at slots {key_idx} (expected every 60 s: {expected_keys})")
-    ok = (pred == si).all() and changes == 0 and key_idx == expected_keys
+
+    # Behaviour: what a 30 fps re-encode with FFmpeg's fps filter picks (the reference
+    # files hand it the sharp frame every time; every other sampling rate gets the mosaic).
+    probe_secs = min(10.0, n / pipeline.SLOT_FPS)
+    picks = {}
+    for mode in ("fps=30", "fps=60", "fps=25"):
+        raw = subprocess.run([pipeline.FFMPEG, "-v", "error", "-t", f"{probe_secs:.3f}", "-i", path, "-vf",
+                              f"{mode},scale={W}:{H},format=gray", "-f", "rawvideo", "pipe:1"],
+                             capture_output=True).stdout
+        m = np.frombuffer(raw, dtype=np.uint8).reshape(-1, H, W).mean(axis=(1, 2))
+        picks[mode] = (int((m < 120).sum()), len(m))
+    print("re-encode behaviour over the first %.0f s: " % probe_secs +
+          ", ".join(f"{k} -> sharp {v[0]}/{v[1]}" for k, v in picks.items()) +
+          "  (reference: fps=30 all sharp but the last, fps=60 and fps=25 all mosaic)")
+    sharp30, n30 = picks["fps=30"]
+    behaviour_ok = n30 > 0 and sharp30 >= n30 - 1 and picks["fps=60"][0] == 0 and picks["fps=25"][0] == 0
+    ok = (pred == si).all() and changes == 0 and key_idx == expected_keys and behaviour_ok
     print("RESULT:", "structure matches" if ok else "structure differs")
     return 0 if ok else 1
 

@@ -26,9 +26,21 @@ tool reproduces:
 | Metadata | compressor name `Lavc61.19.100 libeve-vp9`, `udta` zeroed and renamed `skip` (129 bytes) | same |
 | Bitrate at 1080x1920 | 14-16 Mbps | about 11-12 Mbps at the same quantiser |
 
-Because the sharp frames sit 18 ms before each 30 fps instant, a 60 Hz player that presents the
-latest decoded frame at each refresh shows the real frame on every other refresh. Anything that
-samples on the 30 fps grid, or picks the frame nearest each 30 fps tick, only ever sees the mosaic.
+## What the files do
+
+The point of the construction is which frame a downstream tool ends up with. Measured on the
+reference files and on codec399 output (identical results):
+
+| Consumer | Gets |
+|---|---|
+| FFmpeg `-vf fps=30` (the default rounding) | the sharp video, every frame |
+| FFmpeg `-r 30`, `-r 29.97`, `fps=29.97`, `fps=25`, `fps=24`, `fps=15`, `fps=60` | the mosaic only (29.97 gets a few sharp frames) |
+| Seeking to a time, keyframe thumbnails after 0 s | the mosaic |
+| Chromium playback at 399 fps | mosaic with a sharp flash on about 1 in 13 presented frames |
+
+The sharp frame occupies the last 2.5 ms slot before each 1/30 s boundary, which is exactly the
+frame the `fps` filter keeps when it collapses 399 fps to 30 fps. Anything that samples the stream
+on another grid lands on a mosaic slot. `verify.py` runs these re-encodes and reports the counts.
 
 ## Requirements
 
