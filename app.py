@@ -62,24 +62,27 @@ def _run(job):
         job["status"] = "processing"
         job["started"] = time.time()
     try:
-        summary = pipeline.process(src, dst, on_progress, fast=job["fast"])
+        summary = pipeline.process(src, dst, on_progress, fast=job["fast"], cancel=job["cancel"])
         with lock:
             job.update(status="done", stage="done", progress=1.0, summary=summary, finished=time.time())
     except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
         with lock:
             job.update(status="error", stage="error", error=str(exc), finished=time.time())
     _save_meta(job)
-    try:
-        os.remove(src)
-    except OSError:
-        pass
+    for fn in (src, dst if job["status"] != "done" else None):
+        if fn:
+            try:
+                os.remove(fn)
+            except OSError:
+                pass
 
 
 def _worker():
     while True:
         job = work.get()
         try:
-            _run(job)
+            if not job["cancel"].is_set():
+                _run(job)
         finally:
             work.task_done()
 
@@ -114,6 +117,7 @@ def create_job():
         "fast": request.form.get("fast") in ("1", "true", "on"),
         "input_bytes": os.path.getsize(path),
         "output_name": os.path.splitext(name)[0] + "_codec399.mp4",
+        "cancel": threading.Event(),
     }
     with lock:
         jobs[jid] = job
@@ -137,8 +141,13 @@ def delete_job(jid):
         job = jobs.get(jid)
         if job is None:
             abort(404)
-        if job["status"] in ("queued", "processing"):
-            return jsonify({"error": "This job is still running."}), 409
+        if job["status"] == "processing":
+            job["cancel"].set()
+            return jsonify({"status": "cancelling"}), 202
+        if job["status"] == "queued":
+            job["cancel"].set()
+            job.update(status="error", stage="error", error="Cancelled.", finished=time.time())
+            return jsonify({"status": "cancelled"}), 202
         del jobs[jid]
     jdir = os.path.join(JOBS_DIR, jid)
     for fn in os.listdir(jdir):

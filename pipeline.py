@@ -183,21 +183,11 @@ def _drain(stream, sink):
     stream.close()
 
 
-def _progress_reader(stream, state, key, on_progress):
-    for line in iter(stream.readline, b""):
-        line = line.decode("utf-8", "replace").strip()
-        if line.startswith("frame="):
-            try:
-                state[key] = int(line[6:])
-            except ValueError:
-                continue
-            if on_progress:
-                on_progress(state)
-    stream.close()
+def _stream_slots(src, w, h, mosaic, n_slots, enc_cmd, state, progress_key, on_progress, cancel=None):
+    """Decode the source at 30 fps and feed the 399 fps slot stream into `enc_cmd`.
 
-
-def _stream_slots(src, w, h, mosaic, n_slots, enc_cmd, state, progress_key, on_progress):
-    """Decode the source at 30 fps and feed the 399 fps slot stream into `enc_cmd`."""
+    Progress is counted from the slots written: the pipe only buffers a few frames ahead of
+    the encoder, and in the first pass ffmpeg reports no frames at all."""
     fsz = w * h * 3 // 2
     dec = subprocess.Popen(
         [FFMPEG, "-v", "error", "-nostdin", "-i", src, "-vf", _decode_filter(w, h), "-f", "rawvideo", "pipe:1"],
@@ -208,14 +198,24 @@ def _stream_slots(src, w, h, mosaic, n_slots, enc_cmd, state, progress_key, on_p
     threads = [
         threading.Thread(target=_drain, args=(dec.stderr, dec_err), daemon=True),
         threading.Thread(target=_drain, args=(enc.stderr, enc_err), daemon=True),
-        threading.Thread(target=_progress_reader, args=(enc.stdout, state, progress_key, on_progress), daemon=True),
+        threading.Thread(target=_drain, args=(enc.stdout, []), daemon=True),
     ]
     for t in threads:
         t.start()
     slot = 0
     k = 0
+    cancelled = False
+
+    def tick():
+        state[progress_key] = slot
+        if on_progress:
+            on_progress(state)
+
     try:
         while slot < n_slots:
+            if cancel is not None and cancel.is_set():
+                cancelled = True
+                break
             frame = dec.stdout.read(fsz)
             if len(frame) < fsz:
                 break
@@ -229,10 +229,14 @@ def _stream_slots(src, w, h, mosaic, n_slots, enc_cmd, state, progress_key, on_p
             slot += 1
             k += 1
             state["frames_in"] = k
-        while slot < n_slots:
+            if k % 4 == 0:
+                tick()
+        while slot < n_slots and not cancelled:
             enc.stdin.write(mosaic)
             slot += 1
     finally:
+        if cancelled:
+            enc.kill()
         try:
             enc.stdin.close()
         except OSError:
@@ -243,8 +247,11 @@ def _stream_slots(src, w, h, mosaic, n_slots, enc_cmd, state, progress_key, on_p
         enc.wait()
         for t in threads:
             t.join(timeout=5)
+    if cancelled:
+        raise PipelineError("Cancelled.")
     if enc.returncode != 0:
         raise PipelineError("Encoder failed: " + b"".join(enc_err).decode("utf-8", "replace").strip())
+    tick()
     return k
 
 
@@ -262,9 +269,11 @@ def _encoder_args(w, h, fast, passno, passlog):
     return args
 
 
-def process(src, dst, on_progress=None, fast=False):
+def process(src, dst, on_progress=None, fast=False, cancel=None):
     """Encode `src` to `dst`.  on_progress(state) receives a dict with keys
-    stage, pass1, pass2, est_slots, frames_in, progress.  Returns a summary dict."""
+    stage, pass1, pass2, est_slots, frames_in, progress.  `cancel` is an optional
+    threading.Event; setting it aborts the encode with PipelineError("Cancelled.").
+    Returns a summary dict."""
     info = probe(src)
     w, h = info["width"], info["height"]
     n_slots = total_slots(info["duration"])
@@ -291,8 +300,8 @@ def process(src, dst, on_progress=None, fast=False):
     if not fast:
         report("analysing")
         _stream_slots(src, w, h, mosaic, n_slots,
-                      head + _encoder_args(w, h, False, 1, passlog) + ["-an", "-f", "null", "-progress", "pipe:1", os.devnull],
-                      state, "pass1", lambda s: report())
+                      head + _encoder_args(w, h, False, 1, passlog) + ["-an", "-f", "null", os.devnull],
+                      state, "pass1", lambda s: report(), cancel)
         state["pass1"] = n_slots
 
     report("encoding")
@@ -303,9 +312,9 @@ def process(src, dst, on_progress=None, fast=False):
     if info["has_audio"]:
         cmd += ["-c:a", "aac", "-ar", str(AUDIO_RATE), "-ac", "2", "-b:a", AUDIO_BITRATE]
     cmd += ["-metadata:s:v:0", "encoder=" + ENCODER_TAG, "-metadata", "comment=" + UDTA_PAD,
-            "-movflags", "+faststart", "-progress", "pipe:1", dst]
+            "-movflags", "+faststart", dst]
     try:
-        frames_used = _stream_slots(src, w, h, mosaic, n_slots, cmd, state, "pass2", lambda s: report())
+        frames_used = _stream_slots(src, w, h, mosaic, n_slots, cmd, state, "pass2", lambda s: report(), cancel)
     finally:
         for fn in (passlog + "-0.log", passlog + "-0.log.mbtree", passlog):
             try:

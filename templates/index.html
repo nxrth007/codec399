@@ -119,6 +119,7 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&l
 
 function stageText(j) {
   if (j.status === 'queued') return 'Waiting in queue';
+  if (j.progress > 0.999) return 'Finishing the container';
   if (j.stage === 'preparing') return 'Counting frames and building the mosaic reference frame';
   if (j.stage === 'analysing' || j.stage === 'encoding') {
     let t = `${j.stage === 'analysing' ? 'First pass (analysis)' : 'Second pass (encoding)'}: ${Math.round(j.progress * 100)}%`;
@@ -143,7 +144,8 @@ function card(j) {
   } else if (j.status === 'error') {
     body += `<div class="err">${esc(j.error || 'Unknown error')}</div><div class="actions"><button class="rm" data-id="${j.id}">Remove</button></div>`;
   } else {
-    body += `<div class="bar"><div style="width:${Math.round(j.progress * 100)}%"></div></div><div class="meta">${stageText(j)}</div>`;
+    body += `<div class="bar"><div style="width:${Math.round(j.progress * 100)}%"></div></div><div class="meta">${stageText(j)}</div>
+    <div class="actions"><button class="rm" data-id="${j.id}">Cancel</button></div>`;
   }
   return `<div class="card">${body}</div>`;
 }
