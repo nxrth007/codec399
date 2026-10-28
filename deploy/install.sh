@@ -37,8 +37,15 @@ if [ ! -f "$ENV" ]; then
 fi
 
 install -m 644 "$APP/deploy/codec399.service" /etc/systemd/system/codec399.service
-sed "s|server_name _;|server_name $DOMAIN;|" "$APP/deploy/nginx.conf" > /etc/nginx/sites-available/codec399
-ln -sf /etc/nginx/sites-available/codec399 /etc/nginx/sites-enabled/codec399
+SITE=/etc/nginx/sites-available/codec399
+if [ -f "$SITE" ] && grep -q "managed by Certbot" "$SITE"; then
+    # certbot --nginx has added the HTTPS server block and redirect to this file; rewriting it
+    # from the template would drop them, so an update leaves the site as certbot left it.
+    echo "Keeping $SITE (it carries certbot's HTTPS configuration)."
+else
+    sed "s|server_name _;|server_name $DOMAIN;|" "$APP/deploy/nginx.conf" > "$SITE"
+fi
+ln -sf "$SITE" /etc/nginx/sites-enabled/codec399
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 
