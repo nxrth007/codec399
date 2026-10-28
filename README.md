@@ -69,6 +69,11 @@ Faithful mode is a two-pass encode and runs at about 12 slots per second for a 1
 so a two minute clip takes around an hour. The "Fast encode" checkbox uses a single realtime
 pass and is several times quicker at lower quality and without the alt-ref reference scheme.
 
+The "Encode Audio" checkbox, off by default, runs the soundtrack through `audiocloak.py` before it
+is muxed: a dialled-down phonetic frequency inversion blended with pitch jitter, 3 ms gaps every
+1.5 s and a procedural noise floor, mixed to mono and peak-normalised. The video is unaffected,
+and the result is still encoded to stereo AAC like any other soundtrack.
+
 Finished outputs live in `jobs/<id>/output.mp4` and are listed again after a restart; uploads are
 deleted once a job finishes.
 
@@ -81,7 +86,7 @@ upload limit, and HTTP Basic auth switched on by setting `CODEC399_PASSWORD`. Se
 ## Command line
 
 ```bash
-python pipeline.py input.mp4 output.mp4 [--fast]
+python pipeline.py input.mp4 output.mp4 [--fast] [--encode-audio]
 python verify.py output.mp4
 ```
 

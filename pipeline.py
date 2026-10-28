@@ -50,6 +50,7 @@ import threading
 
 import numpy as np
 
+import audiocloak
 import mp4patch
 
 SLOT_FPS = 399
@@ -269,11 +270,12 @@ def _encoder_args(w, h, fast, passno, passlog):
     return args
 
 
-def process(src, dst, on_progress=None, fast=False, cancel=None):
+def process(src, dst, on_progress=None, fast=False, cancel=None, encode_audio=False):
     """Encode `src` to `dst`.  on_progress(state) receives a dict with keys
     stage, pass1, pass2, est_slots, frames_in, progress.  `cancel` is an optional
     threading.Event; setting it aborts the encode with PipelineError("Cancelled.").
-    Returns a summary dict."""
+    `encode_audio` runs the soundtrack through audiocloak before it is muxed; the
+    video is unaffected.  Returns a summary dict."""
     info = probe(src)
     w, h = info["width"], info["height"]
     n_slots = total_slots(info["duration"])
@@ -292,6 +294,17 @@ def process(src, dst, on_progress=None, fast=False, cancel=None):
     ref_index = min(n_frames - 1, int(round(n_frames * REF_POS)))
     mosaic = build_mosaic(_grab_frame(src, w, h, ref_index), w, h)
 
+    audio_src = src
+    cloaked_wav = None
+    cloak_audio = bool(info["has_audio"] and encode_audio)
+    if cloak_audio:
+        if cancel is not None and cancel.is_set():
+            raise PipelineError("Cancelled.")
+        report("audio")
+        cloaked_wav = dst + ".audio.wav"
+        audiocloak.process(src, cloaked_wav, FFMPEG, FFPROBE)
+        audio_src = cloaked_wav
+
     head = [FFMPEG, "-v", "error", "-nostats", "-nostdin", "-y",
             "-f", "rawvideo", "-pix_fmt", "yuv420p", "-video_size", f"{w}x{h}",
             "-framerate", str(SLOT_FPS), "-i", "pipe:0"]
@@ -307,7 +320,7 @@ def process(src, dst, on_progress=None, fast=False, cancel=None):
     report("encoding")
     cmd = head[:]
     if info["has_audio"]:
-        cmd += ["-i", src, "-map", "0:v:0", "-map", "1:a:0"]
+        cmd += ["-i", audio_src, "-map", "0:v:0", "-map", "1:a:0"]
     cmd += _encoder_args(w, h, fast, 2, passlog)
     if info["has_audio"]:
         cmd += ["-c:a", "aac", "-ar", str(AUDIO_RATE), "-ac", "2", "-b:a", AUDIO_BITRATE]
@@ -316,7 +329,9 @@ def process(src, dst, on_progress=None, fast=False, cancel=None):
     try:
         frames_used = _stream_slots(src, w, h, mosaic, n_slots, cmd, state, "pass2", lambda s: report(), cancel)
     finally:
-        for fn in (passlog + "-0.log", passlog + "-0.log.mbtree", passlog):
+        for fn in (passlog + "-0.log", passlog + "-0.log.mbtree", passlog, cloaked_wav):
+            if fn is None:
+                continue
             try:
                 os.remove(fn)
             except OSError:
@@ -330,18 +345,20 @@ def process(src, dst, on_progress=None, fast=False, cancel=None):
         "output_duration": n_slots / SLOT_FPS, "mosaic_ref_frame": ref_index, "mosaic_ref_time": ref_index / SRC_FPS,
         "block_px": block_size(w), "has_audio": info["has_audio"], "output_bytes": os.path.getsize(dst),
         "source_codec": info["codec"], "source_fps": info["src_fps"], "fast": fast,
+        "encode_audio": cloak_audio,
     }
 
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
-        print("usage: python pipeline.py input.mp4 output.mp4 [--fast]")
+        print("usage: python pipeline.py input.mp4 output.mp4 [--fast] [--encode-audio]")
         sys.exit(2)
 
     def _cb(s):
         print(f"\r{s['stage']}: {s['progress'] * 100:5.1f}%", end="", flush=True)
 
-    summary = process(sys.argv[1], sys.argv[2], _cb, fast="--fast" in sys.argv)
+    summary = process(sys.argv[1], sys.argv[2], _cb, fast="--fast" in sys.argv,
+                      encode_audio="--encode-audio" in sys.argv)
     print()
     print(json.dumps(summary, indent=2))

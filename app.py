@@ -36,7 +36,7 @@ work = queue.Queue()
 
 def _public(job):
     keys = ("id", "name", "status", "stage", "progress", "created", "started", "finished",
-            "error", "summary", "fast", "input_bytes", "output_name")
+            "error", "summary", "fast", "encode_audio", "input_bytes", "output_name")
     return {k: job.get(k) for k in keys}
 
 
@@ -73,7 +73,8 @@ def _run(job):
         job["status"] = "processing"
         job["started"] = time.time()
     try:
-        summary = pipeline.process(src, dst, on_progress, fast=job["fast"], cancel=job["cancel"])
+        summary = pipeline.process(src, dst, on_progress, fast=job["fast"], cancel=job["cancel"],
+                                   encode_audio=bool(job.get("encode_audio")))
         with lock:
             job.update(status="done", stage="done", progress=1.0, summary=summary, finished=time.time())
     except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
@@ -142,6 +143,7 @@ def create_job():
         "id": jid, "name": name, "ext": ext, "status": "queued", "stage": "queued", "progress": 0.0,
         "created": time.time(), "started": None, "finished": None, "error": None, "summary": None,
         "fast": request.form.get("fast") in ("1", "true", "on"),
+        "encode_audio": request.form.get("encode_audio") in ("1", "true", "on"),
         "input_bytes": os.path.getsize(path),
         "output_name": os.path.splitext(name)[0] + "_codec399.mp4",
         "cancel": threading.Event(),

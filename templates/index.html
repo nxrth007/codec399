@@ -65,6 +65,7 @@
     <div class="row">
       <button class="go" id="go" disabled>Process video</button>
       <label><input type="checkbox" id="fast"> Fast encode (lower quality, several times quicker)</label>
+      <label><input type="checkbox" id="encode_audio"> Encode Audio (cloaks the soundtrack; the video is unchanged)</label>
       <span class="meta" id="upload-status"></span>
     </div>
     <p class="meta" style="margin-top:18px">Faithful mode is a two-pass encode at roughly 12 slots per second for a 1080x1920 source, so a two minute clip takes about an hour. Jobs run one at a time; you can queue several.</p>
@@ -100,6 +101,7 @@ go.addEventListener('click', () => {
   const fd = new FormData();
   fd.append('video', picked);
   fd.append('fast', $('#fast').checked ? '1' : '0');
+  fd.append('encode_audio', $('#encode_audio').checked ? '1' : '0');
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/jobs');
   go.disabled = true;
@@ -121,6 +123,7 @@ function stageText(j) {
   if (j.status === 'queued') return 'Waiting in queue';
   if (j.progress > 0.999) return 'Finishing the container';
   if (j.stage === 'preparing') return 'Counting frames and building the mosaic reference frame';
+  if (j.stage === 'audio') return 'Encoding the soundtrack';
   if (j.stage === 'analysing' || j.stage === 'encoding') {
     let t = `${j.stage === 'analysing' ? 'First pass (analysis)' : 'Second pass (encoding)'}: ${Math.round(j.progress * 100)}%`;
     if (j.started && j.progress > 0.02) { const el = Date.now() / 1000 - j.started; t += ` · about ${fmtTime(el / j.progress - el)} left`; }
@@ -131,13 +134,14 @@ function stageText(j) {
 
 function card(j) {
   const s = j.summary || {};
-  let body = `<div class="top"><div class="name" title="${esc(j.name)}">${esc(j.name)}</div><div class="meta">${fmtBytes(j.input_bytes)}${j.fast ? ' · fast' : ''}</div></div>`;
+  let body = `<div class="top"><div class="name" title="${esc(j.name)}">${esc(j.name)}</div><div class="meta">${fmtBytes(j.input_bytes)}${j.fast ? ' · fast' : ''}${j.encode_audio ? ' · audio' : ''}</div></div>`;
   if (j.status === 'done') {
     body += `<dl>
       <dt>Output</dt><dd>${esc(j.output_name)} · ${fmtBytes(s.output_bytes)}</dd>
       <dt>Stream</dt><dd>${s.width}x${s.height}, 399 fps VP9, ${s.slots} slots (${fmtTime(s.output_duration)})</dd>
       <dt>Source frames</dt><dd>${s.source_frames} at 30 fps, each shown for one slot</dd>
       <dt>Mosaic</dt><dd>${s.block_px} px blocks from the frame at ${Number(s.mosaic_ref_time).toFixed(2)} s</dd>
+      ${s.has_audio ? `<dt>Audio</dt><dd>${s.encode_audio ? 'Encode Audio applied, then AAC' : 'Original soundtrack, AAC'}</dd>` : ''}
       <dt>Took</dt><dd>${fmtTime((j.finished || 0) - (j.started || 0))}</dd>
     </dl>
     <div class="actions"><a class="dl" href="/api/jobs/${j.id}/download">Download</a><button class="rm" data-id="${j.id}">Remove</button></div>`;
