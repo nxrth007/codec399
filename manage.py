@@ -1,9 +1,10 @@
 """Account administration for codec399.
 
-    python manage.py add-user EMAIL [--role admin|user] [--password-stdin]
+    python manage.py add-user EMAIL [--role admin|media_buyer|user] [--password-stdin]
     python manage.py set-password EMAIL [--password-stdin]
     python manage.py remove-user EMAIL
-    python manage.py approve EMAIL
+    python manage.py set-role EMAIL user|media_buyer
+    python manage.py approve EMAIL [--role user|media_buyer]
     python manage.py decline EMAIL
     python manage.py list-users
 
@@ -41,7 +42,12 @@ def main(argv=None):
     s.add_argument("--password-stdin", action="store_true")
     r = sub.add_parser("remove-user", help="delete an account")
     r.add_argument("email")
-    sub.add_parser("approve", help="accept a pending registration").add_argument("email")
+    ap = sub.add_parser("approve", help="accept a pending registration")
+    ap.add_argument("email")
+    ap.add_argument("--role", choices=("user", "media_buyer"), default="user")
+    sr = sub.add_parser("set-role", help="switch a non-admin account between user and media_buyer")
+    sr.add_argument("email")
+    sr.add_argument("role", choices=("user", "media_buyer"))
     sub.add_parser("decline", help="remove a pending registration").add_argument("email")
     sub.add_parser("list-users", help="show every account with its role and status")
     args = p.parse_args(argv)
@@ -57,8 +63,11 @@ def main(argv=None):
             auth.remove_user(args.email)
             print(f"Removed {args.email.strip().lower()}")
         elif args.cmd == "approve":
-            auth.approve(args.email)
-            print(f"Approved {args.email.strip().lower()}")
+            auth.approve(args.email, args.role)
+            print(f"Approved {args.email.strip().lower()} as {auth.ROLE_LABELS[args.role]}")
+        elif args.cmd == "set-role":
+            auth.set_role(args.email, args.role)
+            print(f"{args.email.strip().lower()} is now a {auth.ROLE_LABELS[args.role]}")
         elif args.cmd == "decline":
             auth.decline(args.email)
             print(f"Declined and removed {args.email.strip().lower()}")
@@ -69,7 +78,7 @@ def main(argv=None):
             for email, u in sorted(users.items()):
                 created = time.strftime("%Y-%m-%d", time.gmtime(u.get("created", 0)))
                 extra = f"  portfolio {u['portfolio_id']}" if u.get("portfolio_id") else ""
-                print(f"{u.get('role', 'user'):6} {u.get('status', 'active'):8} {email}  (created {created}){extra}")
+                print(f"{u.get('role', 'user'):11} {u.get('status', 'active'):8} {email}  (created {created}){extra}")
     except ValueError as exc:
         sys.exit(str(exc))
 

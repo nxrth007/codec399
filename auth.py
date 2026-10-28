@@ -2,8 +2,8 @@
 
 Accounts live in a JSON file outside the repo, by default `users.json` in the jobs directory
 (`CODEC399_USERS_FILE` overrides the path).  Passwords are stored as werkzeug hashes.  Each
-account has a role (`admin` sees the encoder screen and every job; `user` only gets the upload
-dashboard) and a status: `active`, or `pending` for a self-registration an admin has not yet
+account has a role (`admin` sees the encoder screen and every job; `media_buyer` sees the encoder
+screen but only their own jobs; `user` only gets the upload dashboard) and a status: `active`, or `pending` for a self-registration an admin has not yet
 accepted.  Pending accounts cannot sign in.  Create and change accounts with manage.py; approve
 registrations from the admin screen's Approval tab or with manage.py.
 
@@ -21,7 +21,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("CODEC399_JOBS_DIR") or os.path.join(BASE, "jobs")
 USERS_FILE = os.environ.get("CODEC399_USERS_FILE") or os.path.join(DATA_DIR, "users.json")
-ROLES = ("admin", "user")
+ROLES = ("admin", "media_buyer", "user")
+ROLE_LABELS = {"admin": "admin", "media_buyer": "media buyer", "user": "user"}
 STATUSES = ("active", "pending")
 
 _lock = threading.Lock()
@@ -120,14 +121,17 @@ def pending():
     return sorted(rows, key=lambda r: r["created"] or 0)
 
 
-def approve(email):
+def approve(email, role="user"):
     email = _normalise(email)
+    if role not in ("user", "media_buyer"):
+        raise ValueError("A registration can be accepted as a user or a media buyer.")
     with _lock:
         users = load_users()
         user = users.get(email)
         if user is None or user.get("status") != "pending":
             raise ValueError(f"{email} has no pending registration.")
         user["status"] = "active"
+        user["role"] = role
         user["approved"] = time.time()
         _save_users(users)
         return _public(email, user)
@@ -143,6 +147,25 @@ def decline(email):
             raise ValueError(f"{email} has no pending registration.")
         del users[email]
         _save_users(users)
+
+
+def set_role(email, role):
+    """Switch an active, non-admin account between user and media buyer."""
+    email = _normalise(email)
+    if role not in ("user", "media_buyer"):
+        raise ValueError("Role must be user or media_buyer.")
+    with _lock:
+        users = load_users()
+        user = users.get(email)
+        if user is None:
+            raise ValueError(f"{email} does not exist.")
+        if user.get("role") == "admin":
+            raise ValueError("Admin accounts are managed with manage.py, not from the Approval tab.")
+        if user.get("status", "active") != "active":
+            raise ValueError(f"{email} is still waiting for approval.")
+        user["role"] = role
+        _save_users(users)
+        return _public(email, user)
 
 
 def set_password(email, password):

@@ -69,7 +69,8 @@ different port.
    than 6:00 is refused (`CODEC399_USER_MAX_SECONDS`, default 360); users can send up to eight
    videos per batch. All three limits can be changed on the admin screen's Settings tab.
    Jobs started from the admin screen keep whatever was ticked and have no cap.
-   New users register from the
+   A `media_buyer` account gets these three tabs too but sees, downloads and removes only its own
+   jobs. New users register from the
    sign-in page and wait in the admin's **Approval** tab until accepted.
 2. **Processing** tab: progress bar with a time estimate. Jobs run one at a time and queue.
 3. **Finished** tab: Download, plus a summary of the stream that was produced.

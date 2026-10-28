@@ -133,6 +133,16 @@ def _admin_only():
         abort(403)
 
 
+def _staff_only():
+    """Admins and media buyers share the encoder screen; media buyers see only their own jobs."""
+    if g.user["role"] not in ("admin", "media_buyer"):
+        abort(403)
+
+
+def _mine(job):
+    return g.user["role"] == "admin" or job.get("owner") == g.user["email"]
+
+
 def _safe_next(target):
     return target if target and target.startswith("/") and not target.startswith("//") else "/"
 
@@ -186,9 +196,9 @@ def logout():
 
 @app.get("/")
 def index():
-    if g.user["role"] != "admin":
+    if g.user["role"] not in ("admin", "media_buyer"):
         return redirect(url_for("dashboard"))
-    return render_template("index.html", user=g.user)
+    return render_template("index.html", user=g.user, is_admin=g.user["role"] == "admin")
 
 
 @app.get("/dashboard")
@@ -207,9 +217,10 @@ def list_registrations():
 @app.post("/api/registrations/<path:email>/<decision>")
 def decide_registration(email, decision):
     _admin_only()
+    body = request.get_json(silent=True) or {}
     try:
         if decision == "approve":
-            auth.approve(email)
+            auth.approve(email, body.get("role") or "user")
         elif decision == "decline":
             auth.decline(email)
         else:
@@ -217,6 +228,23 @@ def decide_registration(email, decision):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 404
     return jsonify({"email": email.strip().lower(), "decision": decision})
+
+
+@app.get("/api/accounts")
+def list_accounts():
+    """Active non-admin accounts, for the Approval tab's role switcher."""
+    _admin_only()
+    return jsonify([a for a in auth.accounts() if a["status"] == "active" and a["role"] != "admin"])
+
+
+@app.post("/api/accounts/<path:email>/role")
+def change_role(email):
+    _admin_only()
+    body = request.get_json(silent=True) or {}
+    try:
+        return jsonify(auth.set_role(email, body.get("role")))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.get("/api/settings")
@@ -254,7 +282,7 @@ def gallery():
     _admin_only()
     folders = {}
     for acct in auth.accounts():
-        if acct["status"] == "active" and acct["role"] == "user":
+        if acct["status"] == "active" and acct["role"] in ("user", "media_buyer"):
             folders[acct["email"]] = {"email": acct["email"], "portfolio_id": acct["portfolio_id"],
                                       "role": "user", "videos": [], "in_progress": 0}
     known = {a["email"]: a for a in auth.accounts()}
@@ -277,9 +305,9 @@ def gallery():
 
 @app.get("/api/jobs")
 def list_jobs():
-    _admin_only()
+    _staff_only()
     with lock:
-        items = sorted((_public(j) for j in jobs.values()), key=lambda j: j["created"], reverse=True)
+        items = sorted((_public(j) for j in jobs.values() if _mine(j)), key=lambda j: j["created"], reverse=True)
     return jsonify(items)
 
 
@@ -332,10 +360,10 @@ def create_job():
 
 @app.get("/api/jobs/<jid>/download")
 def download(jid):
-    _admin_only()
+    _staff_only()
     with lock:
         job = jobs.get(jid)
-    if job is None or job["status"] != "done":
+    if job is None or job["status"] != "done" or not _mine(job):
         abort(404)
     path = os.path.join(JOBS_DIR, jid, "output.mp4")
     return send_file(path, as_attachment=True, download_name=job["output_name"], mimetype="video/mp4")
@@ -343,10 +371,10 @@ def download(jid):
 
 @app.delete("/api/jobs/<jid>")
 def delete_job(jid):
-    _admin_only()
+    _staff_only()
     with lock:
         job = jobs.get(jid)
-        if job is None:
+        if job is None or not _mine(job):
             abort(404)
         if job["status"] == "processing":
             job["cancel"].set()

@@ -61,8 +61,9 @@ so a two minute clip takes around an hour on four cores.
 ## Accounts
 
 Every page needs a signed-in account. Accounts live in `/var/lib/codec399/users.json` with hashed
-passwords and a role: `admin` gets the encoder screen with every job, `user` gets an upload-only
-dashboard. Run `manage.py` as the service user so the file keeps the right owner:
+passwords and a role: `admin` gets the encoder screen with every job, `media_buyer` gets the
+encoder screen's Upload, Processing and Finished tabs with only their own jobs, and `user` gets an
+upload-only dashboard. Run `manage.py` as the service user so the file keeps the right owner:
 
 ```bash
 cd /opt/codec399
@@ -77,8 +78,9 @@ the first line of stdin instead. Changes take effect on the next request, no res
 
 People can also register themselves from the sign-in page with an email, a password and their
 Business Portfolio ID. That creates a `pending` account that cannot sign in until an admin accepts
-it on the Approval tab of the encoder screen (or with `manage.py approve EMAIL`); declining removes
-the request.
+it on the Approval tab of the encoder screen as a user or a media buyer (or with
+`manage.py approve EMAIL [--role media_buyer]`); declining removes the request. The same tab
+switches existing non-admin accounts between the two roles (`manage.py set-role`).
 
 ## Updating
 

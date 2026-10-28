@@ -96,6 +96,10 @@
   .crumb .title { font-weight:500; overflow-wrap:anywhere; }
   .crumb .pid { color:var(--muted); font-size:12px; }
   .settings { display:grid; gap:22px; max-width:560px; }
+  h2.sub { font-weight:300; font-size:16px; letter-spacing:.06em; margin:36px 0 6px; }
+  .acct { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; }
+  .acct .role { color:var(--muted); font-size:12px; }
+  .acct .role b { color:var(--text); font-weight:500; }
   .setting { display:grid; gap:8px; }
   .setting label { font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); }
   .setting .ctl { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
@@ -116,7 +120,7 @@
 <header>
   <div class="top">
     <div class="brand"><img src="/static/logo.webp" alt=""><h1>Ghost</h1></div>
-    <div class="who"><span title="{{ user.email }}">{{ user.email }}</span><form method="post" action="/logout"><button type="submit">Sign out</button></form></div>
+    <div class="who"><span title="{{ user.email }}">{{ user.email }}{% if not is_admin %} · media buyer{% endif %}</span><form method="post" action="/logout"><button type="submit">Sign out</button></form></div>
   </div>
   <p>codec399 encoder. Re-encodes a video as a 399 fps VP9 stream: one frozen mosaic frame, with each real 30 fps frame shown for a single 2.5 ms slot.</p>
 </header>
@@ -125,9 +129,11 @@
     <button data-tab="upload" class="active">Upload</button>
     <button data-tab="processing">Processing<span class="badge" id="badge-processing">0</span></button>
     <button data-tab="finished">Finished<span class="badge" id="badge-finished">0</span></button>
+    {% if is_admin %}
     <button data-tab="approval">Approval<span class="badge" id="badge-approval">0</span></button>
     <button data-tab="gallery">Gallery<span class="badge" id="badge-gallery">0</span></button>
     <button data-tab="settings">Settings</button>
+    {% endif %}
   </nav>
 
   <section id="tab-upload" class="active">
@@ -149,7 +155,8 @@
 
   <section id="tab-processing"><div id="processing-list"></div></section>
   <section id="tab-finished"><div id="finished-list"></div></section>
-  <section id="tab-approval"><div id="approval-list"></div></section>
+  {% if is_admin %}
+  <section id="tab-approval"><div id="approval-list"></div><h2 class="sub">Accounts</h2><p class="note">Media buyers see the Upload, Processing and Finished tabs with only their own jobs. Users get the upload dashboard.</p><div id="accounts-list"></div></section>
   <section id="tab-gallery"><div id="gallery-folders" class="folders"></div><div id="gallery-folder" hidden></div></section>
   <section id="tab-settings"><div class="settings">
     <div class="setting">
@@ -172,6 +179,7 @@
     </div>
     <p class="note">Changes apply to the next upload. The user dashboard shows the new limits the next time it loads.</p>
   </div></section>
+  {% endif %}
 </main>
 
 <script>
@@ -278,6 +286,7 @@ function card(j) {
   return `<div class="card">${body}</div>`;
 }
 
+const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
 let openFolder = null;
 let limits = { user_max_seconds: null, auto_fast_seconds: null };
 function mmss(s) { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
@@ -310,8 +319,14 @@ function approvalCard(r) {
   return `<div class="card">
     <div class="top"><div class="name" title="${esc(r.email)}">${esc(r.email)}</div><div class="meta">registered ${esc(fmtDate(r.created))}</div></div>
     <dl><dt>Business Portfolio ID</dt><dd>${esc(r.portfolio_id || '')}</dd></dl>
-    <div class="actions"><button class="ok" data-email="${esc(r.email)}" data-decision="approve">Accept</button><button class="no" data-email="${esc(r.email)}" data-decision="decline">Decline</button></div>
+    <div class="actions"><button class="ok" data-email="${esc(r.email)}" data-decision="approve" data-role="user">Accept as user</button><button class="ok" data-email="${esc(r.email)}" data-decision="approve" data-role="media_buyer">Accept as media buyer</button><button class="no" data-email="${esc(r.email)}" data-decision="decline">Decline</button></div>
   </div>`;
+}
+const ROLE_LABEL = { user: 'user', media_buyer: 'media buyer' };
+function accountCard(a) {
+  const other = a.role === 'media_buyer' ? 'user' : 'media_buyer';
+  return `<div class="card acct"><div><div class="name" title="${esc(a.email)}">${esc(a.email)}</div><div class="role">Role: <b>${ROLE_LABEL[a.role] || esc(a.role)}</b>${a.portfolio_id ? ' · ' + esc(a.portfolio_id) : ''}</div></div>
+    <button class="rm" data-account="${esc(a.email)}" data-role="${other}">Make ${ROLE_LABEL[other]}</button></div>`;
 }
 
 function renderGallery(folders) {
@@ -331,23 +346,30 @@ function render(sel, html) {
 }
 
 async function refresh() {
-  let list, pending, folders;
+  let list, pending = [], folders = [], accounts = [];
   try {
-    const [a, b, c] = await Promise.all([fetch('/api/jobs'), fetch('/api/registrations'), fetch('/api/gallery')]);
-    if (a.status === 401 || b.status === 401 || c.status === 401) { location.href = '/login?next=/'; return; }
-    list = await a.json(); pending = await b.json(); folders = await c.json();
+    const a = await fetch('/api/jobs');
+    if (a.status === 401) { location.href = '/login?next=/'; return; }
+    list = await a.json();
+    if (IS_ADMIN) {
+      const [b, c, d] = await Promise.all([fetch('/api/registrations'), fetch('/api/gallery'), fetch('/api/accounts')]);
+      pending = await b.json(); folders = await c.json(); accounts = await d.json();
+    }
   } catch (e) { return; }
   const active = list.filter(j => j.status === 'queued' || j.status === 'processing');
   const done = list.filter(j => j.status === 'done' || j.status === 'error');
   // Only touch the DOM when a list's content changes, so buttons keep focus and hover between polls.
   render('#processing-list', active.length ? active.map(card).join('') : '<div class="empty">Nothing is processing.</div>')
     | render('#finished-list', done.length ? done.map(card).join('') : '<div class="empty">No finished videos yet.</div>')
-    | render('#approval-list', pending.length ? pending.map(approvalCard).join('') : '<div class="empty">No registrations waiting.</div>')
-    | renderGallery(folders);
+    | (IS_ADMIN ? render('#approval-list', pending.length ? pending.map(approvalCard).join('') : '<div class="empty">No registrations waiting.</div>')
+      | render('#accounts-list', accounts.length ? accounts.map(accountCard).join('') : '<div class="empty">No user or media buyer accounts yet.</div>')
+      | renderGallery(folders) : 0);
   $('#badge-processing').textContent = active.length;
   $('#badge-finished').textContent = done.filter(j => j.status === 'done').length;
-  const ab = $('#badge-approval'); ab.textContent = pending.length; ab.classList.toggle('hot', pending.length > 0);
-  $('#badge-gallery').textContent = folders.reduce((n, f) => n + f.videos.length, 0);
+  if (IS_ADMIN) {
+    const ab = $('#badge-approval'); ab.textContent = pending.length; ab.classList.toggle('hot', pending.length > 0);
+    $('#badge-gallery').textContent = folders.reduce((n, f) => n + f.videos.length, 0);
+  }
 }
 
 // One delegated handler: lists are re-rendered only when they change, so per-element listeners would pile up.
@@ -355,7 +377,9 @@ document.addEventListener('click', async (e) => {
   const rm = e.target.closest('button.rm');
   if (rm) { rm.disabled = true; await fetch('/api/jobs/' + rm.dataset.id, { method: 'DELETE' }); refresh(); return; }
   const dec = e.target.closest('#approval-list button[data-decision]');
-  if (dec) { dec.disabled = true; await fetch('/api/registrations/' + encodeURIComponent(dec.dataset.email) + '/' + dec.dataset.decision, { method: 'POST' }); refresh(); return; }
+  if (dec) { dec.disabled = true; await fetch('/api/registrations/' + encodeURIComponent(dec.dataset.email) + '/' + dec.dataset.decision, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: dec.dataset.role || 'user' }) }); refresh(); return; }
+  const sw = e.target.closest('#accounts-list button[data-account]');
+  if (sw) { sw.disabled = true; await fetch('/api/accounts/' + encodeURIComponent(sw.dataset.account) + '/role', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: sw.dataset.role }) }); refresh(); return; }
   const folder = e.target.closest('#gallery-folders .folder');
   if (folder) { openFolder = folder.dataset.email; refresh(); return; }
   if (e.target.closest('#gallery-back')) { openFolder = null; refresh(); return; }
@@ -374,7 +398,7 @@ document.addEventListener('click', async (e) => {
     set.disabled = false;
   }
 });
-loadLimits();
+if (IS_ADMIN) loadLimits();
 refresh();
 setInterval(refresh, 1000);
 </script>
