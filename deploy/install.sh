@@ -12,7 +12,7 @@ ENV=/etc/codec399.env
 
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-venv python3-pip ffmpeg nginx rsync
-ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libvpx-vp9 || {
+ffmpeg -hide_banner -encoders 2>/dev/null | grep libvpx-vp9 >/dev/null || {
     echo "This ffmpeg has no libvpx-vp9 encoder; install one that does and set FFMPEG in $ENV." >&2
     exit 1
 }
