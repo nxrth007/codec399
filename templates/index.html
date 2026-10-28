@@ -11,6 +11,10 @@
   header { padding:28px 24px 12px; max-width:860px; margin:0 auto; }
   header h1 { margin:0; font-size:22px; letter-spacing:.3px; }
   header p { margin:4px 0 0; color:var(--muted); }
+  header .top { display:flex; justify-content:space-between; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  .who { color:var(--muted); font-size:13px; display:flex; gap:12px; align-items:baseline; }
+  .who button { background:none; border:0; color:var(--muted); font:inherit; cursor:pointer; padding:0; text-decoration:underline; text-underline-offset:3px; }
+  .who button:hover { color:var(--text); }
   main { max-width:860px; margin:0 auto; padding:0 24px 48px; }
   nav { display:flex; gap:6px; border-bottom:1px solid var(--line); margin:16px 0 20px; }
   nav button { background:none; border:0; color:var(--muted); padding:10px 14px; cursor:pointer; font:inherit; border-bottom:2px solid transparent; }
@@ -45,7 +49,7 @@
 </head>
 <body>
 <header>
-  <h1>codec399</h1>
+  <div class="top"><h1>codec399</h1><div class="who"><span>{{ user.email }}</span><form method="post" action="/logout"><button type="submit">Sign out</button></form></div></div>
   <p>Re-encodes a video as a 399 fps VP9 stream: one frozen mosaic frame, with each real 30 fps frame shown for a single 2.5 ms slot.</p>
 </header>
 <main>
@@ -134,7 +138,7 @@ function stageText(j) {
 
 function card(j) {
   const s = j.summary || {};
-  let body = `<div class="top"><div class="name" title="${esc(j.name)}">${esc(j.name)}</div><div class="meta">${fmtBytes(j.input_bytes)}${j.fast ? ' · fast' : ''}${j.encode_audio ? ' · audio' : ''}</div></div>`;
+  let body = `<div class="top"><div class="name" title="${esc(j.name)}">${esc(j.name)}</div><div class="meta">${fmtBytes(j.input_bytes)}${j.fast ? ' · fast' : ''}${j.encode_audio ? ' · audio' : ''}${j.owner ? ' · ' + esc(j.owner) : ''}</div></div>`;
   if (j.status === 'done') {
     body += `<dl>
       <dt>Output</dt><dd>${esc(j.output_name)} · ${fmtBytes(s.output_bytes)}</dd>
@@ -156,7 +160,8 @@ function card(j) {
 
 async function refresh() {
   let list;
-  try { list = await (await fetch('/api/jobs')).json(); } catch (e) { return; }
+  let res;
+  try { res = await fetch('/api/jobs'); if (res.status === 401) { location.href = '/login?next=/'; return; } list = await res.json(); } catch (e) { return; }
   const active = list.filter(j => j.status === 'queued' || j.status === 'processing');
   const done = list.filter(j => j.status === 'done' || j.status === 'error');
   $('#processing-list').innerHTML = active.length ? active.map(card).join('') : '<div class="empty">Nothing is processing.</div>';

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ghost</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400;500&display=swap" rel="stylesheet">
+<style>
+  /* Layout: the same black field as the sign-in page; a thin top bar, then one upload target. */
+  :root {
+    --bg:#000; --fg:#f4f4f4; --dim:#6b6b6b; --faint:#2b2b2b; --field:#0d0d0d; --ok:#9be7c4; --err:#ff5f5f;
+    --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme:dark;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 var(--mono);
+    display:grid; grid-template-rows:auto 1fr;
+    padding-block:20px;
+    padding-left:max(16px, env(safe-area-inset-left, 0px));
+    padding-right:max(16px, env(safe-area-inset-right, 0px));
+  }
+  header { display:flex; justify-content:space-between; align-items:center; gap:16px; width:min(100%, 720px); margin:0 auto; }
+  .wordmark { font-weight:200; font-size:26px; letter-spacing:.08em; margin:0; }
+  .who { display:flex; align-items:center; gap:14px; color:var(--dim); font-size:12px; min-width:0; }
+  .who span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .who button { background:none; border:0; color:var(--dim); font:inherit; letter-spacing:.06em; cursor:pointer; padding:4px 0; text-decoration:underline; text-underline-offset:4px; }
+  .who button:hover, .who button:focus-visible { color:var(--fg); outline:none; }
+  main { display:grid; place-items:center; }
+  .panel { width:min(100%, 520px); display:grid; gap:18px; }
+  .drop {
+    border:1px dashed var(--faint); border-radius:2px; padding:56px 24px; text-align:center;
+    background:var(--field); transition:border-color .15s; display:grid; gap:14px; justify-items:center;
+  }
+  .drop.over, .drop:focus-within { border-color:var(--fg); }
+  .drop input { position:absolute; width:1px; height:1px; opacity:0; }
+  .pick {
+    display:inline-block; font:inherit; letter-spacing:.06em; padding:11px 22px; border-radius:2px; cursor:pointer;
+    border:1px solid var(--fg); background:var(--fg); color:var(--bg); transition:opacity .15s;
+  }
+  .pick:hover { opacity:.86; }
+  .hint { color:var(--dim); font-size:12px; letter-spacing:.04em; }
+  .name { color:var(--fg); font-size:13px; word-break:break-all; }
+  .row { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  button.go { font:inherit; letter-spacing:.06em; padding:11px 22px; border-radius:2px; cursor:pointer; border:1px solid var(--fg); background:transparent; color:var(--fg); }
+  button.go:hover { background:var(--fg); color:var(--bg); }
+  button.go:disabled { opacity:.35; cursor:default; background:transparent; color:var(--fg); }
+  button:focus-visible { outline:2px solid var(--fg); outline-offset:3px; }
+  .bar { height:2px; background:var(--faint); overflow:hidden; }
+  .bar div { height:100%; background:var(--fg); width:0; transition:width .3s; }
+  .status { color:var(--dim); font-size:13px; min-height:1.6em; }
+  .status.ok { color:var(--ok); }
+  .status.err { color:var(--err); }
+  @media (prefers-reduced-motion: reduce) { .bar div { transition:none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1 class="wordmark">Ghost</h1>
+  <div class="who"><span title="{{ user.email }}">{{ user.email }}</span><form method="post" action="/logout"><button type="submit">Sign out</button></form></div>
+</header>
+<main>
+  <div class="panel">
+    <div class="drop" id="drop">
+      <input type="file" id="file" accept="video/mp4,video/quicktime,video/*">
+      <label for="file" class="pick">Choose a video</label>
+      <div class="hint">or drop one here</div>
+      <div class="name" id="filename"></div>
+    </div>
+    <div class="row">
+      <button class="go" id="go" disabled>Upload</button>
+      <div class="status" id="status"></div>
+    </div>
+    <div class="bar" id="bar" hidden><div></div></div>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const drop = $('#drop'), fileInput = $('#file'), go = $('#go'), status = $('#status'), bar = $('#bar');
+let picked = null;
+function setStatus(text, kind) { status.textContent = text; status.className = 'status' + (kind ? ' ' + kind : ''); }
+function setFile(f) { picked = f; $('#filename').textContent = f ? f.name : ''; go.disabled = !f; if (f) setStatus(''); }
+fileInput.addEventListener('change', () => setFile(fileInput.files[0] || null));
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) setFile(f); });
+
+go.addEventListener('click', () => {
+  if (!picked) return;
+  const fd = new FormData();
+  fd.append('video', picked);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/jobs');
+  go.disabled = true; bar.hidden = false;
+  xhr.upload.onprogress = e => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round(e.loaded / e.total * 100);
+    bar.firstElementChild.style.width = pct + '%';
+    setStatus('Uploading ' + pct + '%');
+  };
+  xhr.onload = () => {
+    bar.hidden = true; bar.firstElementChild.style.width = '0';
+    if (xhr.status === 201) {
+      setStatus('Received. ' + picked.name + ' is in the queue.', 'ok');
+      setFile(null); fileInput.value = '';
+    } else if (xhr.status === 401) {
+      location.href = '/login?next=/dashboard';
+    } else {
+      let msg = 'Upload failed.';
+      try { msg = 'Upload failed: ' + (JSON.parse(xhr.responseText).error || xhr.status); } catch (e) {}
+      setStatus(msg, 'err'); go.disabled = false;
+    }
+  };
+  xhr.onerror = () => { bar.hidden = true; setStatus('Upload failed. Check your connection and try again.', 'err'); go.disabled = false; };
+  xhr.send(fd);
+});
+</script>
+</body>
+</html>

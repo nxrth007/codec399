@@ -1,5 +1,4 @@
 """codec399 web app: upload a video, run the methodology, download the result."""
-import hmac
 import json
 import os
 import queue
@@ -7,10 +6,11 @@ import threading
 import time
 import uuid
 
-from flask import Flask, Response, abort, jsonify, render_template, request, send_file
+from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
+import auth
 import pipeline
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -23,9 +23,12 @@ if os.environ.get("CODEC399_BEHIND_PROXY") == "1":
     # Trust one reverse proxy (nginx) for the client address and scheme.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-# Set CODEC399_PASSWORD to require HTTP Basic auth; unset, the app stays open (local use).
-AUTH_USER = os.environ.get("CODEC399_USER", "codec399")
-AUTH_PASSWORD = os.environ.get("CODEC399_PASSWORD", "")
+# Every page needs a signed-in account (see auth.py and manage.py).  The session cookie is only
+# sent over HTTPS when the app runs behind the proxy, which is where HTTPS is enforced.
+app.secret_key = auth.secret_key()
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                  SESSION_COOKIE_SECURE=os.environ.get("CODEC399_BEHIND_PROXY") == "1",
+                  PERMANENT_SESSION_LIFETIME=14 * 24 * 3600)
 # Jobs queued or running at once before new uploads are refused.
 MAX_QUEUE = int(os.environ.get("CODEC399_MAX_QUEUE", "10"))
 
@@ -36,7 +39,7 @@ work = queue.Queue()
 
 def _public(job):
     keys = ("id", "name", "status", "stage", "progress", "created", "started", "finished",
-            "error", "summary", "fast", "encode_audio", "input_bytes", "output_name")
+            "error", "summary", "fast", "encode_audio", "input_bytes", "output_name", "owner")
     return {k: job.get(k) for k in keys}
 
 
@@ -99,25 +102,74 @@ def _worker():
             work.task_done()
 
 
+PUBLIC_ENDPOINTS = {"login", "static"}
+
+
 @app.before_request
-def _require_password():
-    if not AUTH_PASSWORD:
+def _require_login():
+    if request.endpoint in PUBLIC_ENDPOINTS:
         return None
-    auth = request.authorization
-    if (auth is not None and auth.type == "basic"
-            and hmac.compare_digest(auth.username or "", AUTH_USER)
-            and hmac.compare_digest(auth.password or "", AUTH_PASSWORD)):
-        return None
-    return Response("codec399: sign in required.\n", 401, {"WWW-Authenticate": 'Basic realm="codec399"'})
+    user = auth.get_user(session.get("email")) if session.get("email") else None
+    if user is None:
+        session.clear()
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Sign in required."}), 401
+        return redirect(url_for("login", next=request.full_path.rstrip("?")))
+    g.user = user
+    return None
+
+
+def _admin_only():
+    if g.user["role"] != "admin":
+        abort(403)
+
+
+def _safe_next(target):
+    return target if target and target.startswith("/") and not target.startswith("//") else "/"
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("email") and auth.get_user(session["email"]):
+        return redirect(_safe_next(request.args.get("next")))
+    error = None
+    email = ""
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip()
+        user = auth.verify(email, request.form.get("password") or "")
+        if user is None:
+            time.sleep(0.5)  # blunt password guessing a little
+            error = "That email and password don't match."
+        else:
+            session.clear()
+            session["email"] = user["email"]
+            session.permanent = True
+            return redirect(_safe_next(request.args.get("next")))
+    status = 401 if error else 200
+    return render_template("login.html", error=error, email=email, next=request.args.get("next") or ""), status
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    if g.user["role"] != "admin":
+        return redirect(url_for("dashboard"))
+    return render_template("index.html", user=g.user)
+
+
+@app.get("/dashboard")
+def dashboard():
+    return render_template("dashboard.html", user=g.user)
 
 
 @app.get("/api/jobs")
 def list_jobs():
+    _admin_only()
     with lock:
         items = sorted((_public(j) for j in jobs.values()), key=lambda j: j["created"], reverse=True)
     return jsonify(items)
@@ -145,6 +197,7 @@ def create_job():
         "fast": request.form.get("fast") in ("1", "true", "on"),
         "encode_audio": request.form.get("encode_audio") in ("1", "true", "on"),
         "input_bytes": os.path.getsize(path),
+        "owner": g.user["email"],
         "output_name": os.path.splitext(name)[0] + "_codec399.mp4",
         "cancel": threading.Event(),
     }
@@ -156,6 +209,7 @@ def create_job():
 
 @app.get("/api/jobs/<jid>/download")
 def download(jid):
+    _admin_only()
     with lock:
         job = jobs.get(jid)
     if job is None or job["status"] != "done":
@@ -166,6 +220,7 @@ def download(jid):
 
 @app.delete("/api/jobs/<jid>")
 def delete_job(jid):
+    _admin_only()
     with lock:
         job = jobs.get(jid)
         if job is None:

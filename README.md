@@ -55,13 +55,16 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
+python manage.py add-user you@example.com --role admin   # once; asks for a password
 python app.py
 ```
 
-Then open http://127.0.0.1:5399. On Windows you can double-click `run.bat`. Set `PORT` to use a
+Then open http://127.0.0.1:5399 and sign in. On Windows you can double-click `run.bat`. Set `PORT` to use a
 different port.
 
-1. **Upload** tab: click Upload (or drop a file), then Process video.
+1. **Upload** tab: click Upload (or drop a file), then Process video. Accounts with the `user` role
+   see an upload-only dashboard instead of these tabs; their uploads join the same queue, tagged
+   with their email, and only admins can download or remove them.
 2. **Processing** tab: progress bar with a time estimate. Jobs run one at a time and queue.
 3. **Finished** tab: Download, plus a summary of the stream that was produced.
 
@@ -80,7 +83,7 @@ deleted once a job finishes.
 ## Deploy to a server
 
 `deploy/` holds a one-shot installer for an Ubuntu VPS: gunicorn under systemd, nginx with a 16 GB
-upload limit, and HTTP Basic auth switched on by setting `CODEC399_PASSWORD`. See
+upload limit, and accounts created with `manage.py`. See
 [deploy/README.md](deploy/README.md).
 
 ## Command line

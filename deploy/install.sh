@@ -28,12 +28,8 @@ rsync -a --delete --exclude .git --exclude jobs --exclude .venv --exclude __pyca
 chown -R codec399:codec399 "$APP" "$DATA"
 
 if [ ! -f "$ENV" ]; then
-    PASS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')"
-    sed "s|^CODEC399_PASSWORD=.*|CODEC399_PASSWORD=$PASS|" "$APP/deploy/codec399.env.example" > "$ENV"
-    chmod 600 "$ENV"
-    echo "Wrote $ENV with a generated password."
-    echo "  user: codec399"
-    echo "  password: $PASS"
+    install -m 600 "$APP/deploy/codec399.env.example" "$ENV"
+    echo "Wrote $ENV."
 fi
 
 install -m 644 "$APP/deploy/codec399.service" /etc/systemd/system/codec399.service
@@ -58,3 +54,8 @@ echo
 echo "codec399 is running behind nginx on port 80 (server_name $DOMAIN)."
 echo "Check:  systemctl status codec399   and   journalctl -u codec399 -f"
 echo "HTTPS:  apt-get install -y certbot python3-certbot-nginx && certbot --nginx -d $DOMAIN"
+if [ ! -f "$DATA/users.json" ]; then
+    echo
+    echo "No accounts yet. Create the admin account (you will be asked for the password):"
+    echo "  cd $APP && sudo -u codec399 CODEC399_JOBS_DIR=$DATA .venv/bin/python manage.py add-user you@example.com --role admin"
+fi
