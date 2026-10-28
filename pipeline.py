@@ -1,23 +1,47 @@
 """codec399 - re-encode any video with the frozen-mosaic / single-slot methodology.
 
-Structure reproduced (measured from the two reference files):
+Everything below was measured from the two reference files (CODEC.mp4 and
+CODEC2.mp4) by decoding every frame, parsing every VP9 frame header and walking
+the MP4 box tree.  What this module reproduces:
 
-* Output is a 399 fps VP9 (profile 0, yuv420p, limited range) stream in MP4,
-  track timescale 12768 (= 399 * 32), one keyframe at the start only.
+Stream structure
+* 399 fps VP9 profile 0, yuv420p, limited range, MP4 track timescale 12768
+  (= 399 * 32), a keyframe at the start and every 60 s (slot 23940) after it.
 * The source is normalised to 30 fps.  Source frame k is shown for exactly one
-  399 fps slot, placed 18 ms *before* its nominal instant:
+  399 fps slot, placed 18 ms before its nominal instant:
       slot(k) = round((k / 30 - 0.018) * 399)      (slot(0) = 0)
   This matched all 6,565 sharp frames of the reference files with no misses.
-* Every other slot holds one frozen "mosaic" image for the whole file: a 54 px
-  block average (20 blocks across a 1080 px frame) of the frame sitting at 24 %
-  of the clip duration, with contrast collapsed:
-      Y' = 0.548 * Y + 118.3        U',V' = 0.49 * (C - 128) + 128
-* Audio is re-encoded to AAC-LC stereo at 96 kHz.
+* The stream length is the source duration in slots; frames whose slot falls
+  beyond it are dropped (the reference files end on the source duration, not on
+  the last frame).
+* Every other slot holds one frozen "mosaic" image for the whole file.
 
-The reference files were produced with the Eve VP9 encoder from Two Orioles,
-which is commercial.  This module uses the libvpx-vp9 encoder in FFmpeg with
-matching stream parameters, so the stream structure is identical; only the
-encoder name tag in the container differs.
+Mosaic
+* Built from the source frame at 25 % of the frame count (frame 868 of 3472 in
+  CODEC.mp4 is exactly one quarter).
+* Block average on a 54 px grid anchored at the top-left (20 blocks across a
+  1080 px frame; partial edge blocks are averaged on their own), then a plain
+  contrast/brightness collapse applied in YUV:
+      Y' = 0.5175 * (Y - 128) + 128 + 57.5        C' = 0.5175 * (C - 128) + 128
+  That fits both reference mosaics to within two luma levels (their own VP9
+  quantisation noise is about half a level).
+
+Encoder behaviour (Eve VP9 in the originals, libvpx-vp9 here)
+* Quantiser index 94-97 on the shown sharp frames -> CRF 24 (index 96).
+* Single tile, frame-parallel mode off, no error resilience, a hidden
+  alt-ref frame per group so that hold frames are coded as 20-30 byte copies
+  of a reference that is never overwritten -> 2-pass with auto-alt-ref and no
+  alt-ref filtering.  Hold packets come out at ~23 bytes (Eve: ~30) and the
+  held image drifts by 0.01 luma levels across the file (Eve: 0.03).
+* AAC-LC stereo at 96 kHz from FFmpeg's own AAC encoder with a 512 kbps target,
+  which that encoder undershoots to whatever the content needs (the reference
+  files land at 334 and 415 kbps with a 512000 max-bitrate field).
+
+Container
+* FFmpeg MP4 muxer with faststart (ftyp, moov, free, mdat), 1:1 `pasp`,
+  `vpcC` chroma-subsampling code 0, compressor name string, and a 129 byte
+  `udta` box that was zeroed and renamed to `skip` after muxing (see
+  mp4patch.py, which also mirrors the bitrate fields).
 """
 import json
 import os
@@ -26,17 +50,22 @@ import threading
 
 import numpy as np
 
+import mp4patch
+
 SLOT_FPS = 399
 SRC_FPS = 30
 TIMESCALE = 12768
 LEAD_SEC = 0.018
-REF_POS = 0.24
+REF_POS = 0.25
 BLOCKS_ACROSS = 20
-Y_GAIN, Y_OFFSET = 0.548, 118.3
-C_GAIN = 0.49
+CONTRAST = 0.5175
+BRIGHTNESS = 57.5
 AUDIO_RATE = 96000
-AUDIO_BITRATE = "384k"
-CRF = 20
+AUDIO_BITRATE = "512k"
+CRF = 24
+KEYFRAME_SLOTS = 60 * SLOT_FPS             # both reference files have their second keyframe at exactly 60.000 s
+ENCODER_TAG = "Lavc61.19.100 libeve-vp9"   # compressor-name string found in the reference files (label only)
+UDTA_PAD = "x" * 15                        # sizes the muxer's udta/meta box to the reference 129 bytes before it is zeroed
 
 FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
 FFPROBE = os.environ.get("FFPROBE", "ffprobe")
@@ -53,9 +82,9 @@ def sharp_slot(k):
     return int(round((k / SRC_FPS - LEAD_SEC) * SLOT_FPS))
 
 
-def total_slots(n_frames):
-    """Stream length in slots for n source frames (where frame n would land)."""
-    return int(round((n_frames / SRC_FPS - LEAD_SEC) * SLOT_FPS))
+def total_slots(duration):
+    """Stream length in slots for a source of the given duration in seconds."""
+    return max(1, int(round(duration * SLOT_FPS)))
 
 
 def block_size(width):
@@ -81,7 +110,7 @@ def probe(path):
         w, h = h, w
     w -= w % 2
     h -= h % 2
-    duration = float(info.get("format", {}).get("duration") or video.get("duration") or 0)
+    duration = float(video.get("duration") or info.get("format", {}).get("duration") or 0)
     if duration <= 0:
         raise PipelineError("Could not read the video duration.")
     return {"width": w, "height": h, "duration": duration, "has_audio": has_audio,
@@ -109,9 +138,9 @@ def build_mosaic(frame_yuv420p, width, height):
     y = buf[:ysz].reshape(height, width)
     u = buf[ysz:ysz + csz].reshape(height // 2, width // 2)
     v = buf[ysz + csz:ysz + 2 * csz].reshape(height // 2, width // 2)
-    y2 = Y_GAIN * _block_mean(y, b) + Y_OFFSET
-    u2 = C_GAIN * (_block_mean(u, max(1, b // 2)) - 128) + 128
-    v2 = C_GAIN * (_block_mean(v, max(1, b // 2)) - 128) + 128
+    y2 = CONTRAST * (_block_mean(y, b) - 128) + 128 + BRIGHTNESS
+    u2 = CONTRAST * (_block_mean(u, max(1, b // 2)) - 128) + 128
+    v2 = CONTRAST * (_block_mean(v, max(1, b // 2)) - 128) + 128
     out = np.concatenate([np.rint(p).clip(0, 255).astype(np.uint8).ravel() for p in (y2, u2, v2)])
     return out.tobytes()
 
@@ -120,17 +149,32 @@ def _decode_filter(w, h):
     return f"fps={SRC_FPS}:round=near,scale={w}:{h}:flags=bicubic,format=yuv420p"
 
 
-def _grab_reference(src, w, h, t_ref):
+def _count_frames(src, w, h):
+    """Number of frames the 30 fps decode will produce."""
+    res = subprocess.run(
+        [FFMPEG, "-v", "error", "-nostdin", "-nostats", "-i", src, "-vf", _decode_filter(w, h),
+         "-f", "null", "-progress", "pipe:1", "-"],
+        capture_output=True, text=True,
+    )
+    frames = 0
+    for line in res.stdout.splitlines():
+        if line.startswith("frame="):
+            frames = int(line[6:])
+    if frames <= 0:
+        raise PipelineError("The decoder produced no frames: " + res.stderr.strip())
+    return frames
+
+
+def _grab_frame(src, w, h, index):
     fsz = w * h * 3 // 2
-    for t in (t_ref, 0.0):
-        res = subprocess.run(
-            [FFMPEG, "-v", "error", "-ss", f"{t:.3f}", "-i", src, "-vf", _decode_filter(w, h),
-             "-frames:v", "1", "-f", "rawvideo", "pipe:1"],
-            capture_output=True,
-        )
-        if res.returncode == 0 and len(res.stdout) >= fsz:
-            return res.stdout[:fsz], t
-    raise PipelineError("Could not decode a reference frame from the input.")
+    res = subprocess.run(
+        [FFMPEG, "-v", "error", "-nostdin", "-i", src, "-vf", _decode_filter(w, h) + f",select='eq(n,{index})'",
+         "-vsync", "0", "-frames:v", "1", "-f", "rawvideo", "pipe:1"],
+        capture_output=True,
+    )
+    if res.returncode != 0 or len(res.stdout) < fsz:
+        raise PipelineError("Could not decode the mosaic reference frame from the input.")
+    return res.stdout[:fsz]
 
 
 def _drain(stream, sink):
@@ -139,12 +183,12 @@ def _drain(stream, sink):
     stream.close()
 
 
-def _progress_reader(stream, state, on_progress):
+def _progress_reader(stream, state, key, on_progress):
     for line in iter(stream.readline, b""):
         line = line.decode("utf-8", "replace").strip()
         if line.startswith("frame="):
             try:
-                state["encoded"] = int(line[6:])
+                state[key] = int(line[6:])
             except ValueError:
                 continue
             if on_progress:
@@ -152,60 +196,32 @@ def _progress_reader(stream, state, on_progress):
     stream.close()
 
 
-def process(src, dst, on_progress=None, fast=False):
-    """Encode `src` to `dst`.  on_progress(state) receives a dict with keys
-    stage, encoded, est_slots, frames_in.  Returns a summary dict."""
-    info = probe(src)
-    w, h = info["width"], info["height"]
+def _stream_slots(src, w, h, mosaic, n_slots, enc_cmd, state, progress_key, on_progress):
+    """Decode the source at 30 fps and feed the 399 fps slot stream into `enc_cmd`."""
     fsz = w * h * 3 // 2
-    est_frames = max(1, int(round(info["duration"] * SRC_FPS)))
-    state = {"stage": "preparing", "encoded": 0, "est_slots": total_slots(est_frames), "frames_in": 0}
-    if on_progress:
-        on_progress(state)
-
-    ref, t_ref = _grab_reference(src, w, h, REF_POS * info["duration"])
-    mosaic = build_mosaic(ref, w, h)
-
     dec = subprocess.Popen(
-        [FFMPEG, "-v", "error", "-nostdin", "-i", src, "-vf", _decode_filter(w, h),
-         "-f", "rawvideo", "pipe:1"],
+        [FFMPEG, "-v", "error", "-nostdin", "-i", src, "-vf", _decode_filter(w, h), "-f", "rawvideo", "pipe:1"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
-
-    enc_cmd = [FFMPEG, "-v", "error", "-nostats", "-y",
-               "-f", "rawvideo", "-pix_fmt", "yuv420p", "-video_size", f"{w}x{h}",
-               "-framerate", str(SLOT_FPS), "-i", "pipe:0"]
-    if info["has_audio"]:
-        enc_cmd += ["-i", src, "-map", "0:v:0", "-map", "1:a:0"]
-    enc_cmd += ["-c:v", "libvpx-vp9", "-profile:v", "0", "-pix_fmt", "yuv420p", "-color_range", "tv",
-                "-b:v", "0", "-crf", str(CRF),
-                "-deadline", "realtime" if fast else "good", "-cpu-used", "8" if fast else "4",
-                "-row-mt", "1", "-threads", str(os.cpu_count() or 4),
-                "-g", "999999", "-keyint_min", "999999", "-auto-alt-ref", "0", "-lag-in-frames", "0",
-                "-r", str(SLOT_FPS), "-video_track_timescale", str(TIMESCALE)]
-    if info["has_audio"]:
-        enc_cmd += ["-c:a", "aac", "-ar", str(AUDIO_RATE), "-ac", "2", "-b:a", AUDIO_BITRATE]
-    enc_cmd += ["-progress", "pipe:1", dst]
     enc = subprocess.Popen(enc_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
     dec_err, enc_err = [], []
     threads = [
         threading.Thread(target=_drain, args=(dec.stderr, dec_err), daemon=True),
         threading.Thread(target=_drain, args=(enc.stderr, enc_err), daemon=True),
-        threading.Thread(target=_progress_reader, args=(enc.stdout, state, on_progress), daemon=True),
+        threading.Thread(target=_progress_reader, args=(enc.stdout, state, progress_key, on_progress), daemon=True),
     ]
     for t in threads:
         t.start()
-
-    state["stage"] = "encoding"
     slot = 0
     k = 0
     try:
-        while True:
+        while slot < n_slots:
             frame = dec.stdout.read(fsz)
             if len(frame) < fsz:
                 break
             target = sharp_slot(k)
+            if target >= n_slots:
+                break
             while slot < target:
                 enc.stdin.write(mosaic)
                 slot += 1
@@ -213,11 +229,7 @@ def process(src, dst, on_progress=None, fast=False):
             slot += 1
             k += 1
             state["frames_in"] = k
-        n_frames = k
-        if n_frames == 0:
-            raise PipelineError("The decoder produced no frames: " + b"".join(dec_err).decode("utf-8", "replace"))
-        end = total_slots(n_frames)
-        while slot < end:
+        while slot < n_slots:
             enc.stdin.write(mosaic)
             slot += 1
     finally:
@@ -226,22 +238,89 @@ def process(src, dst, on_progress=None, fast=False):
         except OSError:
             pass
         dec.stdout.close()
+        dec.kill()
         dec.wait()
         enc.wait()
         for t in threads:
             t.join(timeout=5)
-
     if enc.returncode != 0:
         raise PipelineError("Encoder failed: " + b"".join(enc_err).decode("utf-8", "replace").strip())
-    state["stage"] = "done"
-    state["encoded"] = slot
-    if on_progress:
-        on_progress(state)
+    return k
+
+
+def _encoder_args(w, h, fast, passno, passlog):
+    args = ["-vf", "setsar=1", "-c:v", "libvpx-vp9", "-profile:v", "0", "-pix_fmt", "yuv420p",
+            "-color_range", "tv", "-chroma_sample_location", "left", "-b:v", "0", "-crf", str(CRF),
+            "-tile-columns", "0", "-frame-parallel", "0", "-row-mt", "1", "-threads", str(os.cpu_count() or 4),
+            "-g", str(KEYFRAME_SLOTS), "-keyint_min", str(KEYFRAME_SLOTS),
+            "-r", str(SLOT_FPS), "-video_track_timescale", str(TIMESCALE)]
+    if fast:
+        args += ["-deadline", "realtime", "-cpu-used", "8", "-auto-alt-ref", "0", "-lag-in-frames", "0"]
+    else:
+        args += ["-deadline", "good", "-cpu-used", "4", "-auto-alt-ref", "1", "-lag-in-frames", "25",
+                 "-arnr-maxframes", "1", "-arnr-strength", "0", "-pass", str(passno), "-passlogfile", passlog]
+    return args
+
+
+def process(src, dst, on_progress=None, fast=False):
+    """Encode `src` to `dst`.  on_progress(state) receives a dict with keys
+    stage, pass1, pass2, est_slots, frames_in, progress.  Returns a summary dict."""
+    info = probe(src)
+    w, h = info["width"], info["height"]
+    n_slots = total_slots(info["duration"])
+    state = {"stage": "preparing", "pass1": 0, "pass2": 0, "est_slots": n_slots, "frames_in": 0, "progress": 0.0}
+
+    def report(stage=None):
+        if stage:
+            state["stage"] = stage
+        done = (0.08 * state["pass1"] + 0.92 * state["pass2"]) if not fast else state["pass2"]
+        state["progress"] = min(0.999, done / n_slots)
+        if on_progress:
+            on_progress(state)
+
+    report("preparing")
+    n_frames = _count_frames(src, w, h)
+    ref_index = min(n_frames - 1, int(round(n_frames * REF_POS)))
+    mosaic = build_mosaic(_grab_frame(src, w, h, ref_index), w, h)
+
+    head = [FFMPEG, "-v", "error", "-nostats", "-nostdin", "-y",
+            "-f", "rawvideo", "-pix_fmt", "yuv420p", "-video_size", f"{w}x{h}",
+            "-framerate", str(SLOT_FPS), "-i", "pipe:0"]
+    passlog = dst + ".2pass"
+
+    if not fast:
+        report("analysing")
+        _stream_slots(src, w, h, mosaic, n_slots,
+                      head + _encoder_args(w, h, False, 1, passlog) + ["-an", "-f", "null", "-progress", "pipe:1", os.devnull],
+                      state, "pass1", lambda s: report())
+        state["pass1"] = n_slots
+
+    report("encoding")
+    cmd = head[:]
+    if info["has_audio"]:
+        cmd += ["-i", src, "-map", "0:v:0", "-map", "1:a:0"]
+    cmd += _encoder_args(w, h, fast, 2, passlog)
+    if info["has_audio"]:
+        cmd += ["-c:a", "aac", "-ar", str(AUDIO_RATE), "-ac", "2", "-b:a", AUDIO_BITRATE]
+    cmd += ["-metadata:s:v:0", "encoder=" + ENCODER_TAG, "-metadata", "comment=" + UDTA_PAD,
+            "-movflags", "+faststart", "-progress", "pipe:1", dst]
+    try:
+        frames_used = _stream_slots(src, w, h, mosaic, n_slots, cmd, state, "pass2", lambda s: report())
+    finally:
+        for fn in (passlog + "-0.log", passlog + "-0.log.mbtree", passlog):
+            try:
+                os.remove(fn)
+            except OSError:
+                pass
+
+    mp4patch.patch(dst)
+    state["pass2"] = n_slots
+    report("done")
     return {
-        "width": w, "height": h, "source_frames": n_frames, "slots": slot,
-        "output_duration": slot / SLOT_FPS, "mosaic_ref_time": t_ref, "block_px": block_size(w),
-        "has_audio": info["has_audio"], "output_bytes": os.path.getsize(dst),
-        "source_codec": info["codec"], "source_fps": info["src_fps"],
+        "width": w, "height": h, "source_frames": frames_used, "slots": n_slots,
+        "output_duration": n_slots / SLOT_FPS, "mosaic_ref_frame": ref_index, "mosaic_ref_time": ref_index / SRC_FPS,
+        "block_px": block_size(w), "has_audio": info["has_audio"], "output_bytes": os.path.getsize(dst),
+        "source_codec": info["codec"], "source_fps": info["src_fps"], "fast": fast,
     }
 
 
@@ -252,7 +331,7 @@ if __name__ == "__main__":
         sys.exit(2)
 
     def _cb(s):
-        print(f"\r{s['stage']}: {s['encoded']}/{s['est_slots']} slots", end="", flush=True)
+        print(f"\r{s['stage']}: {s['progress'] * 100:5.1f}%", end="", flush=True)
 
     summary = process(sys.argv[1], sys.argv[2], _cb, fast="--fast" in sys.argv)
     print()

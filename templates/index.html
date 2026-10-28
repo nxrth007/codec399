@@ -67,7 +67,7 @@
       <label><input type="checkbox" id="fast"> Fast encode (lower quality, several times quicker)</label>
       <span class="meta" id="upload-status"></span>
     </div>
-    <p class="meta" style="margin-top:18px">Faithful mode encodes at roughly 45 slots per second for a 1080x1920 source, so a two minute clip takes about 15 to 20 minutes. Jobs run one at a time; you can queue several.</p>
+    <p class="meta" style="margin-top:18px">Faithful mode is a two-pass encode at roughly 12 slots per second for a 1080x1920 source, so a two minute clip takes about an hour. Jobs run one at a time; you can queue several.</p>
   </section>
 
   <section id="tab-processing"><div id="processing-list"></div></section>
@@ -119,9 +119,9 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&l
 
 function stageText(j) {
   if (j.status === 'queued') return 'Waiting in queue';
-  if (j.stage === 'preparing') return 'Building the mosaic reference frame';
-  if (j.stage === 'encoding') {
-    let t = `Encoding slots: ${Math.round(j.progress * 100)}%`;
+  if (j.stage === 'preparing') return 'Counting frames and building the mosaic reference frame';
+  if (j.stage === 'analysing' || j.stage === 'encoding') {
+    let t = `${j.stage === 'analysing' ? 'First pass (analysis)' : 'Second pass (encoding)'}: ${Math.round(j.progress * 100)}%`;
     if (j.started && j.progress > 0.02) { const el = Date.now() / 1000 - j.started; t += ` · about ${fmtTime(el / j.progress - el)} left`; }
     return t;
   }

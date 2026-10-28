@@ -56,8 +56,7 @@ def _run(job):
     def on_progress(state):
         with lock:
             job["stage"] = state["stage"]
-            if state["est_slots"]:
-                job["progress"] = min(0.999, state["encoded"] / state["est_slots"])
+            job["progress"] = state["progress"]
 
     with lock:
         job["status"] = "processing"
