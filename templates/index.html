@@ -191,7 +191,7 @@ function stageText(j) {
 
 function card(j) {
   const s = j.summary || {};
-  let body = `<div class="top"><div class="name" title="${esc(j.name)}">${esc(j.name)}</div><div class="meta">${fmtBytes(j.input_bytes)}${j.fast ? ' · fast' : ''}${j.encode_audio ? ' · audio' : ''}${j.owner ? ' · ' + esc(j.owner) : ''}</div></div>`;
+  let body = `<div class="top"><div class="name" title="${esc(j.name)}">${esc(j.name)}</div><div class="meta">${fmtBytes(j.input_bytes)}${j.fast ? (j.fast_auto ? ' · fast (auto, 4 min or longer)' : ' · fast') : ''}${j.encode_audio ? ' · audio' : ''}${j.owner ? ' · ' + esc(j.owner) : ''}</div></div>`;
   if (j.status === 'done') {
     body += `<dl>
       <dt>Output</dt><dd>${esc(j.output_name)} · ${fmtBytes(s.output_bytes)}</dd>

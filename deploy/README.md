@@ -22,6 +22,7 @@ The app itself reads these environment variables:
 | `CODEC399_JOBS_DIR` | Where uploads and outputs live, default `jobs/` next to the code |
 | `CODEC399_BEHIND_PROXY` | `1` to trust one reverse proxy's forwarded headers |
 | `CODEC399_MAX_QUEUE` | Jobs queued or running before new uploads get a 429, default 10 |
+| `CODEC399_AUTO_FAST_SECONDS` | User uploads at least this long use Fast encode automatically, default 240 |
 | `HOST`, `PORT` | Bind address for `python app.py`; gunicorn uses its own `--bind` |
 
 Jobs run one at a time. Faithful mode on a 1080x1920 source runs at about 12 slots per second,

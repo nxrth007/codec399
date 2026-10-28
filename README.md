@@ -64,7 +64,9 @@ different port.
 
 1. **Upload** tab: click Upload (or drop a file), then Process video. Accounts with the `user` role
    see an upload-only dashboard instead of these tabs; their uploads join the same queue, tagged
-   with their email, and only admins can download or remove them. New users register from the
+   with their email, and only admins can download or remove them. A user upload that runs four
+   minutes or longer is encoded in Fast mode automatically (`CODEC399_AUTO_FAST_SECONDS`, default
+   240); jobs started from the admin screen keep whatever was ticked. New users register from the
    sign-in page and wait in the admin's **Approval** tab until accepted.
 2. **Processing** tab: progress bar with a time estimate. Jobs run one at a time and queue.
 3. **Finished** tab: Download, plus a summary of the stream that was produced.

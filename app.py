@@ -31,6 +31,9 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
                   PERMANENT_SESSION_LIFETIME=14 * 24 * 3600)
 # Jobs queued or running at once before new uploads are refused.
 MAX_QUEUE = int(os.environ.get("CODEC399_MAX_QUEUE", "10"))
+# Uploads from user accounts at least this long are encoded in Fast mode automatically; jobs started
+# from the admin panel keep whatever the admin chose.
+AUTO_FAST_SECONDS = float(os.environ.get("CODEC399_AUTO_FAST_SECONDS", "240"))
 
 jobs = {}
 lock = threading.Lock()
@@ -39,7 +42,7 @@ work = queue.Queue()
 
 def _public(job):
     keys = ("id", "name", "status", "stage", "progress", "created", "started", "finished",
-            "error", "summary", "fast", "encode_audio", "input_bytes", "output_name", "owner")
+            "error", "summary", "fast", "fast_auto", "encode_audio", "input_bytes", "output_name", "owner")
     return {k: job.get(k) for k in keys}
 
 
@@ -260,10 +263,18 @@ def create_job():
     os.makedirs(jdir)
     path = os.path.join(jdir, "input" + ext)
     file.save(path)
+    fast = request.form.get("fast") in ("1", "true", "on")
+    fast_auto = False
+    if g.user["role"] != "admin" and not fast:
+        try:
+            fast_auto = pipeline.probe(path)["duration"] >= AUTO_FAST_SECONDS
+        except Exception:  # noqa: BLE001 - an unreadable file fails properly once the job runs
+            fast_auto = False
+        fast = fast or fast_auto
     job = {
         "id": jid, "name": name, "ext": ext, "status": "queued", "stage": "queued", "progress": 0.0,
         "created": time.time(), "started": None, "finished": None, "error": None, "summary": None,
-        "fast": request.form.get("fast") in ("1", "true", "on"),
+        "fast": fast, "fast_auto": fast_auto,
         "encode_audio": request.form.get("encode_audio") in ("1", "true", "on"),
         "input_bytes": os.path.getsize(path),
         "owner": g.user["email"],
