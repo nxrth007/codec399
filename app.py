@@ -13,6 +13,7 @@ from werkzeug.utils import secure_filename
 
 import auth
 import pipeline
+import settings
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 JOBS_DIR = os.environ.get("CODEC399_JOBS_DIR") or os.path.join(BASE, "jobs")
@@ -32,11 +33,8 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
                   PERMANENT_SESSION_LIFETIME=14 * 24 * 3600)
 # Jobs queued or running at once before new uploads are refused.
 MAX_QUEUE = int(os.environ.get("CODEC399_MAX_QUEUE", "10"))
-# Uploads from user accounts longer than this are encoded in Fast mode automatically; jobs started
-# from the admin panel keep whatever the admin chose.
-AUTO_FAST_SECONDS = float(os.environ.get("CODEC399_AUTO_FAST_SECONDS", "210"))
-# Uploads from user accounts longer than this are refused; admins have no cap.
-USER_MAX_SECONDS = float(os.environ.get("CODEC399_USER_MAX_SECONDS", "360"))
+# The user upload length cap and the automatic Fast cutoff live in settings.py: they start from
+# CODEC399_USER_MAX_SECONDS / CODEC399_AUTO_FAST_SECONDS and are editable on the Settings tab.
 
 jobs = {}
 lock = threading.Lock()
@@ -195,7 +193,7 @@ def index():
 
 @app.get("/dashboard")
 def dashboard():
-    return render_template("dashboard.html", user=g.user, max_seconds=int(USER_MAX_SECONDS), max_batch=8)
+    return render_template("dashboard.html", user=g.user, max_seconds=int(round(settings.get("user_max_seconds"))), max_batch=8)
 
 
 @app.get("/api/registrations")
@@ -217,6 +215,32 @@ def decide_registration(email, decision):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 404
     return jsonify({"email": email.strip().lower(), "decision": decision})
+
+
+@app.get("/api/settings")
+def get_settings():
+    _admin_only()
+    return jsonify(settings.load())
+
+
+@app.post("/api/settings")
+def set_settings():
+    """Body: {"user_max_minutes": 6, "auto_fast_minutes": 3.5}; either key may be omitted."""
+    _admin_only()
+    body = request.get_json(silent=True) or {}
+    changes = {}
+    for field, key in (("user_max_minutes", "user_max_seconds"), ("auto_fast_minutes", "auto_fast_seconds")):
+        if field in body:
+            try:
+                changes[key] = float(body[field]) * 60
+            except (TypeError, ValueError):
+                return jsonify({"error": "Enter a number of minutes."}), 400
+    if not changes:
+        return jsonify({"error": "Nothing to set."}), 400
+    try:
+        return jsonify(settings.update(changes))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.get("/api/gallery")
@@ -274,15 +298,17 @@ def create_job():
     fast = request.form.get("fast") in ("1", "true", "on")
     fast_auto = False
     if g.user["role"] != "admin":
+        limits = settings.load()
         try:
             duration = pipeline.probe(path)["duration"]
         except Exception:  # noqa: BLE001 - an unreadable file fails properly once the job runs
             duration = None
-        if duration is not None and duration > USER_MAX_SECONDS:
+        if duration is not None and duration > limits["user_max_seconds"]:
             shutil.rmtree(jdir, ignore_errors=True)
-            return jsonify({"error": f"You can't upload a video longer than {_mmss(USER_MAX_SECONDS)}; this one is {_mmss(duration)}."}), 413
+            return jsonify({"error": f"You can't upload a video longer than {_mmss(limits['user_max_seconds'])}; "
+                                     f"this one is {_mmss(duration)}."}), 413
         if duration is not None and not fast:
-            fast_auto = duration > AUTO_FAST_SECONDS
+            fast_auto = duration > limits["auto_fast_seconds"]
             fast = fast_auto
     job = {
         "id": jid, "name": name, "ext": ext, "status": "queued", "stage": "queued", "progress": 0.0,

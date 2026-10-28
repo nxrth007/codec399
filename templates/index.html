@@ -87,6 +87,17 @@
   .crumb button:hover { color:var(--text); }
   .crumb .title { font-weight:500; overflow-wrap:anywhere; }
   .crumb .pid { color:var(--muted); font-size:12px; }
+  .settings { display:grid; gap:22px; max-width:560px; }
+  .setting { display:grid; gap:8px; }
+  .setting label { font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); }
+  .setting .ctl { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .setting input { width:110px; background:var(--panel); color:var(--text); border:0; border-bottom:1px solid var(--faint); padding:9px 4px; font:inherit; outline:none; border-radius:0; }
+  .setting input:focus { border-bottom-color:var(--text); }
+  .setting .unit { color:var(--muted); font-size:13px; }
+  .setting .now { color:var(--muted); font-size:12px; }
+  .setting .now b { color:var(--text); font-weight:500; }
+  .setting .msg { font-size:12px; min-height:1.4em; }
+  .setting .msg.ok { color:var(--ok); } .setting .msg.err { color:var(--err); }
   dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; margin:12px 0 0; font-size:13px; }
   dt { color:var(--muted); } dd { margin:0; min-width:0; overflow-wrap:anywhere; }
   @media (max-width: 480px) { dl { grid-template-columns:1fr; gap:0 } dt { margin-top:6px; } }
@@ -108,6 +119,7 @@
     <button data-tab="finished">Finished<span class="badge" id="badge-finished">0</span></button>
     <button data-tab="approval">Approval<span class="badge" id="badge-approval">0</span></button>
     <button data-tab="gallery">Gallery<span class="badge" id="badge-gallery">0</span></button>
+    <button data-tab="settings">Settings</button>
   </nav>
 
   <section id="tab-upload" class="active">
@@ -130,6 +142,21 @@
   <section id="tab-finished"><div id="finished-list"></div></section>
   <section id="tab-approval"><div id="approval-list"></div></section>
   <section id="tab-gallery"><div id="gallery-folders" class="folders"></div><div id="gallery-folder" hidden></div></section>
+  <section id="tab-settings"><div class="settings">
+    <div class="setting">
+      <label for="set-max">Longest video a user may upload</label>
+      <div class="ctl"><input id="set-max" type="number" min="0.5" step="0.5" inputmode="decimal"><span class="unit">minutes</span><button type="button" class="ok" data-set="user_max_minutes" data-input="set-max">Set</button></div>
+      <div class="now">Now: <b id="now-max">…</b>. Applies per video, to user accounts only; admins have no cap.</div>
+      <div class="msg" id="msg-max"></div>
+    </div>
+    <div class="setting">
+      <label for="set-fast">Use Fast encode for user videos longer than</label>
+      <div class="ctl"><input id="set-fast" type="number" min="0" step="0.5" inputmode="decimal"><span class="unit">minutes</span><button type="button" class="ok" data-set="auto_fast_minutes" data-input="set-fast">Set</button></div>
+      <div class="now">Now: <b id="now-fast">…</b>. Jobs started from this screen keep whatever you tick.</div>
+      <div class="msg" id="msg-fast"></div>
+    </div>
+    <p class="note">Changes apply to the next upload. The sign-in page and the user dashboard show the new limit straight away.</p>
+  </div></section>
 </main>
 
 <script>
@@ -210,7 +237,7 @@ function stageText(j) {
 
 function card(j) {
   const s = j.summary || {};
-  let body = `<div class="top"><div class="name" title="${esc(j.name)}">${esc(j.name)}</div><div class="meta">${fmtBytes(j.input_bytes)}${j.fast ? (j.fast_auto ? ' · fast (auto, over 3:30)' : ' · fast') : ''}${j.encode_audio ? ' · audio' : ''}${j.owner ? ' · ' + esc(j.owner) : ''}</div></div>`;
+  let body = `<div class="top"><div class="name" title="${esc(j.name)}">${esc(j.name)}</div><div class="meta">${fmtBytes(j.input_bytes)}${j.fast ? (j.fast_auto ? ' · fast (auto, over ' + (limits.auto_fast_seconds == null ? 'limit' : mmss(limits.auto_fast_seconds)) + ')' : ' · fast') : ''}${j.encode_audio ? ' · audio' : ''}${j.owner ? ' · ' + esc(j.owner) : ''}</div></div>`;
   if (j.status === 'done') {
     body += `<dl>
       <dt>Output</dt><dd>${esc(j.output_name)} · ${fmtBytes(s.output_bytes)}</dd>
@@ -231,6 +258,17 @@ function card(j) {
 }
 
 let openFolder = null;
+let limits = { user_max_seconds: null, auto_fast_seconds: null };
+function mmss(s) { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
+function showLimits(v) {
+  limits = v;
+  $('#now-max').textContent = mmss(v.user_max_seconds);
+  $('#now-fast').textContent = mmss(v.auto_fast_seconds);
+  for (const [id, key] of [['set-max', 'user_max_seconds'], ['set-fast', 'auto_fast_seconds']]) {
+    const el = $('#' + id); if (document.activeElement !== el && el.value === '') el.placeholder = (v[key] / 60).toFixed(1).replace(/\.0$/, '');
+  }
+}
+async function loadLimits() { try { const r = await fetch('/api/settings'); if (r.ok) showLimits(await r.json()); } catch (e) {} }
 function folderTile(f) {
   const n = f.videos.length;
   const label = f.email || 'Unassigned';
@@ -297,8 +335,23 @@ document.addEventListener('click', async (e) => {
   if (dec) { dec.disabled = true; await fetch('/api/registrations/' + encodeURIComponent(dec.dataset.email) + '/' + dec.dataset.decision, { method: 'POST' }); refresh(); return; }
   const folder = e.target.closest('#gallery-folders .folder');
   if (folder) { openFolder = folder.dataset.email; refresh(); return; }
-  if (e.target.closest('#gallery-back')) { openFolder = null; refresh(); }
+  if (e.target.closest('#gallery-back')) { openFolder = null; refresh(); return; }
+  const set = e.target.closest('button[data-set]');
+  if (set) {
+    const input = $('#' + set.dataset.input), msg = $(set.dataset.input === 'set-max' ? '#msg-max' : '#msg-fast');
+    const n = parseFloat(input.value);
+    if (!(n >= 0)) { msg.textContent = 'Enter a number of minutes.'; msg.className = 'msg err'; return; }
+    set.disabled = true;
+    try {
+      const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [set.dataset.set]: n }) });
+      const body = await r.json();
+      if (r.ok) { showLimits(body); input.value = ''; msg.textContent = 'Set.'; msg.className = 'msg ok'; }
+      else { msg.textContent = body.error || 'Could not save.'; msg.className = 'msg err'; }
+    } catch (err) { msg.textContent = 'Could not save.'; msg.className = 'msg err'; }
+    set.disabled = false;
+  }
 });
+loadLimits();
 refresh();
 setInterval(refresh, 1000);
 </script>

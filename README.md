@@ -67,7 +67,8 @@ different port.
    with their email, and only admins can download or remove them. A user upload longer than 3:30
    is encoded in Fast mode automatically (`CODEC399_AUTO_FAST_SECONDS`, default 210), and one longer
    than 6:00 is refused (`CODEC399_USER_MAX_SECONDS`, default 360); users can send up to eight
-   videos per batch. Jobs started from the admin screen keep whatever was ticked and have no cap.
+   videos per batch. Both limits can be changed on the admin screen's Settings tab, in minutes.
+   Jobs started from the admin screen keep whatever was ticked and have no cap.
    New users register from the
    sign-in page and wait in the admin's **Approval** tab until accepted.
 2. **Processing** tab: progress bar with a time estimate. Jobs run one at a time and queue.
