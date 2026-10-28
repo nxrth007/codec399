@@ -24,8 +24,9 @@ The app itself reads these environment variables:
 | `CODEC399_MAX_QUEUE` | Jobs queued or running before new uploads get a 429, default 10 |
 | `CODEC399_AUTO_FAST_SECONDS` | User uploads longer than this use Fast encode automatically, default 210 (3:30) |
 | `CODEC399_USER_MAX_SECONDS` | User uploads longer than this are refused, default 360 (6:00); admins have no cap |
+| `CODEC399_USER_MAX_BATCH` | Videos a user may upload per batch, default 8 |
 
-The last two are starting values: admins change them on the Settings tab of the encoder screen,
+The last three are starting values: admins change them on the Settings tab of the encoder screen,
 and the saved values in `/var/lib/codec399/settings.json` win over the environment.
 | `HOST`, `PORT` | Bind address for `python app.py`; gunicorn uses its own `--bind` |
 

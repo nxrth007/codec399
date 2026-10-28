@@ -193,7 +193,9 @@ def index():
 
 @app.get("/dashboard")
 def dashboard():
-    return render_template("dashboard.html", user=g.user, max_seconds=int(round(settings.get("user_max_seconds"))), max_batch=8)
+    limits = settings.load()
+    return render_template("dashboard.html", user=g.user, max_seconds=int(round(limits["user_max_seconds"])),
+                           max_batch=int(limits["user_max_batch"]))
 
 
 @app.get("/api/registrations")
@@ -225,7 +227,7 @@ def get_settings():
 
 @app.post("/api/settings")
 def set_settings():
-    """Body: {"user_max_minutes": 6, "auto_fast_minutes": 3.5}; either key may be omitted."""
+    """Body: {"user_max_minutes": 6, "auto_fast_minutes": 3.5, "user_max_batch": 8}; any key may be omitted."""
     _admin_only()
     body = request.get_json(silent=True) or {}
     changes = {}
@@ -235,6 +237,8 @@ def set_settings():
                 changes[key] = float(body[field]) * 60
             except (TypeError, ValueError):
                 return jsonify({"error": "Enter a number of minutes."}), 400
+    if "user_max_batch" in body:
+        changes["user_max_batch"] = body["user_max_batch"]
     if not changes:
         return jsonify({"error": "Nothing to set."}), 400
     try:

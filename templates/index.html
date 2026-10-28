@@ -47,8 +47,16 @@
   .drop .pick { display:inline-block; background:var(--text); color:var(--bg); padding:11px 22px; border-radius:2px; cursor:pointer; letter-spacing:.06em; }
   .drop .pick:hover { opacity:.86; }
   .drop .hint { color:var(--muted); margin-top:12px; font-size:12px; letter-spacing:.04em; }
-  .file { margin-top:16px; color:var(--text); font-size:13px; word-break:break-all; display:grid; gap:2px; justify-items:center; }
-  .file .more { color:var(--muted); }
+  .file { margin-top:18px; color:var(--text); font-size:13px; width:min(100%, 520px); display:grid; gap:3px; text-align:left; }
+  .file .head { color:var(--muted); font-size:11px; letter-spacing:.18em; text-transform:uppercase; margin-bottom:4px; text-align:center; }
+  .file div.item { display:flex; gap:12px; justify-content:space-between; }
+  .file .n { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .file .n i { color:var(--muted); font-style:normal; margin-right:8px; }
+  .file .sz { color:var(--muted); white-space:nowrap; }
+  .file .more { color:var(--muted); text-align:center; }
+  .warn { border:1px solid #f0c674; color:#f0c674; border-radius:2px; padding:12px 16px; font-size:13px; margin-top:16px; }
+  .warn b { font-weight:500; }
+  #upload-status.ok { color:var(--ok); }
   .row { display:flex; align-items:center; gap:18px; margin-top:18px; flex-wrap:wrap; }
   .row label { color:var(--muted); font-size:13px; display:flex; align-items:center; gap:8px; }
   .row input[type=checkbox] { accent-color:var(--accent); width:15px; height:15px; }
@@ -126,7 +134,7 @@
     <div class="drop" id="drop">
       <input type="file" id="file" accept="video/mp4,video/quicktime,video/*" multiple>
       <label for="file" class="pick">Choose videos</label>
-      <div class="hint">or drop one or more here. Each becomes its own job, using the options below.</div>
+      <div class="hint">Pick several at once (hold Ctrl or Shift in the file dialog) or drop a batch here. Each becomes its own job with the options below, and they upload one after another after a single click.</div>
       <div class="file" id="filename"></div>
     </div>
     <div class="row">
@@ -135,6 +143,7 @@
       <label><input type="checkbox" id="encode_audio"> Encode Audio (cloaks the soundtrack; the video is unchanged)</label>
       <span class="meta" id="upload-status"></span>
     </div>
+    <div class="warn" id="upload-warn" hidden><b>Keep this tab open</b> until every video has uploaded. You can use other tabs or windows meanwhile; closing this one stops the uploads still in progress. Encoding then runs on the server on its own.</div>
     <p class="note">Faithful mode is a two-pass encode at roughly 12 slots per second for a 1080x1920 source, so a two minute clip takes about an hour. Jobs run one at a time; you can queue several.</p>
   </section>
 
@@ -155,7 +164,13 @@
       <div class="now">Now: <b id="now-fast">…</b>. Jobs started from this screen keep whatever you tick.</div>
       <div class="msg" id="msg-fast"></div>
     </div>
-    <p class="note">Changes apply to the next upload. The sign-in page and the user dashboard show the new limit straight away.</p>
+    <div class="setting">
+      <label for="set-batch">Videos a user may upload per batch</label>
+      <div class="ctl"><input id="set-batch" type="number" min="1" max="50" step="1" inputmode="numeric"><span class="unit">videos</span><button type="button" class="ok" data-set="user_max_batch" data-input="set-batch">Set</button></div>
+      <div class="now">Now: <b id="now-batch">…</b>. Whole number from 1 to 50. Admins have no batch limit.</div>
+      <div class="msg" id="msg-batch"></div>
+    </div>
+    <p class="note">Changes apply to the next upload. The user dashboard shows the new limits the next time it loads.</p>
   </div></section>
 </main>
 
@@ -172,9 +187,11 @@ const drop = $('#drop'), fileInput = $('#file'), go = $('#go');
 let picked = [];
 function setFiles(list) {
   picked = Array.from(list || []).filter(f => f && f.name);
-  const shown = picked.slice(0, 6).map(f => `<div>${esc(f.name)}</div>`).join('');
-  const more = picked.length > 6 ? `<div class="more">and ${picked.length - 6} more</div>` : '';
-  $('#filename').innerHTML = shown + more;
+  const head = picked.length ? `<div class="head">${picked.length} video${picked.length === 1 ? '' : 's'} selected</div>` : '';
+  const shown = picked.slice(0, 10).map((f, i) => `<div class="item"><span class="n"><i>${i + 1}.</i>${esc(f.name)}</span><span class="sz">${fmtBytes(f.size)}</span></div>`).join('');
+  const more = picked.length > 10 ? `<div class="more">and ${picked.length - 10} more</div>` : '';
+  $('#filename').innerHTML = head + shown + more;
+  $('#upload-status').textContent = ''; $('#upload-status').className = 'meta';
   go.textContent = picked.length > 1 ? `Process ${picked.length} videos` : 'Process video';
   go.disabled = picked.length === 0;
 }
@@ -205,16 +222,20 @@ function uploadOne(file, index, total) {
 go.addEventListener('click', async () => {
   if (!picked.length) return;
   const files = picked.slice();
-  go.disabled = true;
+  go.disabled = true; $('#upload-warn').hidden = false;
   const failures = [];
   for (let i = 0; i < files.length; i++) {
     const err = await uploadOne(files[i], i, files.length);
     if (err) failures.push(err);
     refresh();
   }
-  $('#upload-status').textContent = failures.length ? 'Upload failed: ' + failures.join(' · ') : '';
+  $('#upload-warn').hidden = true;
+  const sent = files.length - failures.length;
   if (failures.length < files.length) { setFiles([]); fileInput.value = ''; showTab('processing'); }
   else go.disabled = false;
+  const st = $('#upload-status');
+  if (!failures.length) { st.textContent = sent === 1 ? `${files[0].name} queued.` : `${sent} videos queued.`; st.className = 'meta ok'; }
+  else { st.textContent = (sent ? `${sent} of ${files.length} queued. ` : '') + 'Not sent: ' + failures.join(' · '); st.className = 'meta'; }
 });
 
 function fmtBytes(n) { if (n == null) return ''; const u = ['B','KB','MB','GB']; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + ' ' + u[i]; }
@@ -264,6 +285,8 @@ function showLimits(v) {
   limits = v;
   $('#now-max').textContent = mmss(v.user_max_seconds);
   $('#now-fast').textContent = mmss(v.auto_fast_seconds);
+  $('#now-batch').textContent = v.user_max_batch;
+  const nb = $('#set-batch'); if (document.activeElement !== nb && nb.value === '') nb.placeholder = v.user_max_batch;
   for (const [id, key] of [['set-max', 'user_max_seconds'], ['set-fast', 'auto_fast_seconds']]) {
     const el = $('#' + id); if (document.activeElement !== el && el.value === '') el.placeholder = (v[key] / 60).toFixed(1).replace(/\.0$/, '');
   }
@@ -338,9 +361,9 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('#gallery-back')) { openFolder = null; refresh(); return; }
   const set = e.target.closest('button[data-set]');
   if (set) {
-    const input = $('#' + set.dataset.input), msg = $(set.dataset.input === 'set-max' ? '#msg-max' : '#msg-fast');
+    const input = $('#' + set.dataset.input), msg = $('#msg-' + set.dataset.input.replace('set-', ''));
     const n = parseFloat(input.value);
-    if (!(n >= 0)) { msg.textContent = 'Enter a number of minutes.'; msg.className = 'msg err'; return; }
+    if (!(n >= 0)) { msg.textContent = set.dataset.set === 'user_max_batch' ? 'Enter a whole number of videos.' : 'Enter a number of minutes.'; msg.className = 'msg err'; return; }
     set.disabled = true;
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [set.dataset.set]: n }) });

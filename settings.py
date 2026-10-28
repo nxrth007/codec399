@@ -1,7 +1,8 @@
 """Admin-editable settings, kept in `settings.json` next to the accounts file.
 
 Each value starts from its environment variable (or built-in default) and can be changed from the
-admin screen's Settings tab without a restart.  Values are seconds; the UI shows minutes.
+admin screen's Settings tab without a restart.  Lengths are seconds (the UI shows minutes); the
+batch size is a count.
 """
 import json
 import os
@@ -17,6 +18,8 @@ FIELDS = {
                          "Longest video a user may upload"),
     "auto_fast_seconds": ("CODEC399_AUTO_FAST_SECONDS", 210.0, 0.0, 24 * 3600.0,
                           "User uploads longer than this use Fast encode"),
+    "user_max_batch": ("CODEC399_USER_MAX_BATCH", 8.0, 1.0, 50.0,
+                       "Videos a user may upload per batch"),
 }
 
 _lock = threading.Lock()
@@ -61,6 +64,11 @@ def update(changes):
                 val = float(raw)
             except (TypeError, ValueError):
                 raise ValueError(f"{label}: enter a number.")
+            if key == "user_max_batch":
+                if val != int(val) or not (lo <= val <= hi):
+                    raise ValueError(f"{label}: enter a whole number from {lo:g} to {hi:g}.")
+                values[key] = float(int(val))
+                continue
             if not (lo <= val <= hi):
                 raise ValueError(f"{label}: must be between {lo / 60:g} and {hi / 60:g} minutes.")
             values[key] = val
