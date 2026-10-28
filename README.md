@@ -72,6 +72,12 @@ pass and is several times quicker at lower quality and without the alt-ref refer
 Finished outputs live in `jobs/<id>/output.mp4` and are listed again after a restart; uploads are
 deleted once a job finishes.
 
+## Deploy to a server
+
+`deploy/` holds a one-shot installer for an Ubuntu VPS: gunicorn under systemd, nginx with a 16 GB
+upload limit, and HTTP Basic auth switched on by setting `CODEC399_PASSWORD`. See
+[deploy/README.md](deploy/README.md).
+
 ## Command line
 
 ```bash

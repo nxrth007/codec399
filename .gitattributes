@@ -1,0 +1,5 @@
+# Files that run on Linux must keep LF endings even on Windows checkouts.
+*.sh text eol=lf
+deploy/codec399.service text eol=lf
+deploy/nginx.conf text eol=lf
+deploy/*.env.example text eol=lf

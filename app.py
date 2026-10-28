@@ -1,4 +1,5 @@
 """codec399 web app: upload a video, run the methodology, download the result."""
+import hmac
 import json
 import os
 import queue
@@ -6,17 +7,27 @@ import threading
 import time
 import uuid
 
-from flask import Flask, abort, jsonify, render_template, request, send_file
+from flask import Flask, Response, abort, jsonify, render_template, request, send_file
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
 import pipeline
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-JOBS_DIR = os.path.join(BASE, "jobs")
+JOBS_DIR = os.environ.get("CODEC399_JOBS_DIR") or os.path.join(BASE, "jobs")
 os.makedirs(JOBS_DIR, exist_ok=True)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 ** 3
+if os.environ.get("CODEC399_BEHIND_PROXY") == "1":
+    # Trust one reverse proxy (nginx) for the client address and scheme.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+# Set CODEC399_PASSWORD to require HTTP Basic auth; unset, the app stays open (local use).
+AUTH_USER = os.environ.get("CODEC399_USER", "codec399")
+AUTH_PASSWORD = os.environ.get("CODEC399_PASSWORD", "")
+# Jobs queued or running at once before new uploads are refused.
+MAX_QUEUE = int(os.environ.get("CODEC399_MAX_QUEUE", "10"))
 
 jobs = {}
 lock = threading.Lock()
@@ -87,6 +98,18 @@ def _worker():
             work.task_done()
 
 
+@app.before_request
+def _require_password():
+    if not AUTH_PASSWORD:
+        return None
+    auth = request.authorization
+    if (auth is not None and auth.type == "basic"
+            and hmac.compare_digest(auth.username or "", AUTH_USER)
+            and hmac.compare_digest(auth.password or "", AUTH_PASSWORD)):
+        return None
+    return Response("codec399: sign in required.\n", 401, {"WWW-Authenticate": 'Basic realm="codec399"'})
+
+
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -101,6 +124,10 @@ def list_jobs():
 
 @app.post("/api/jobs")
 def create_job():
+    with lock:
+        pending = sum(1 for j in jobs.values() if j["status"] in ("queued", "processing"))
+    if pending >= MAX_QUEUE:
+        return jsonify({"error": f"The queue is full ({MAX_QUEUE} jobs). Try again later."}), 429
     file = request.files.get("video")
     if file is None or not file.filename:
         return jsonify({"error": "No file was uploaded."}), 400
@@ -166,6 +193,7 @@ _load_existing()
 threading.Thread(target=_worker, daemon=True).start()
 
 if __name__ == "__main__":
+    host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "5399"))
-    print(f"codec399 running at http://127.0.0.1:{port}")
-    app.run(host="127.0.0.1", port=port, threaded=True)
+    print(f"codec399 running at http://{host}:{port}")
+    app.run(host=host, port=port, threaded=True)
