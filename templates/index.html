@@ -2,68 +2,101 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>codec399</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ghost</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#e6e8ee; --muted:#8b93a7; --accent:#5b8cff; --ok:#3ecf8e; --err:#ff6b6b; }
+  /* Layout: the Ghost black field; a brand bar, one row of tabs with a red marker, then cards. */
+  :root {
+    --bg:#000; --panel:#0b0b0b; --line:#242424; --text:#f4f4f4; --muted:#6b6b6b; --faint:#2b2b2b;
+    --accent:#e5202a; --ok:#9be7c4; --err:#ff5f5f;
+    --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme:dark;
+  }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  header { padding:28px 24px 12px; max-width:860px; margin:0 auto; }
-  header h1 { margin:0; font-size:22px; letter-spacing:.3px; }
-  header p { margin:4px 0 0; color:var(--muted); }
-  header .top { display:flex; justify-content:space-between; align-items:baseline; gap:16px; flex-wrap:wrap; }
-  .who { color:var(--muted); font-size:13px; display:flex; gap:12px; align-items:baseline; }
-  .who button { background:none; border:0; color:var(--muted); font:inherit; cursor:pointer; padding:0; text-decoration:underline; text-underline-offset:3px; }
-  .who button:hover { color:var(--text); }
-  main { max-width:860px; margin:0 auto; padding:0 24px 48px; }
-  nav { display:flex; gap:6px; border-bottom:1px solid var(--line); margin:16px 0 20px; }
-  nav button { background:none; border:0; color:var(--muted); padding:10px 14px; cursor:pointer; font:inherit; border-bottom:2px solid transparent; }
+  body {
+    margin:0; background:var(--bg); color:var(--text); font:14px/1.6 var(--mono);
+    padding-left:max(16px, env(safe-area-inset-left, 0px)); padding-right:max(16px, env(safe-area-inset-right, 0px));
+  }
+  header { max-width:880px; margin:0 auto; padding:24px 0 8px; }
+  header .top { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; gap:14px; }
+  .brand img { width:44px; height:44px; display:block; }
+  .brand h1 { margin:0; font-weight:200; font-size:28px; letter-spacing:.08em; }
+  header p { margin:10px 0 0; color:var(--muted); font-size:13px; max-width:68ch; }
+  .who { color:var(--muted); font-size:12px; display:flex; gap:14px; align-items:baseline; min-width:0; }
+  .who span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .who button { background:none; border:0; color:var(--muted); font:inherit; letter-spacing:.06em; cursor:pointer; padding:0; text-decoration:underline; text-underline-offset:4px; }
+  .who button:hover, .who button:focus-visible { color:var(--text); outline:none; }
+  main { max-width:880px; margin:0 auto; padding:0 0 56px; }
+  nav { display:flex; gap:4px; border-bottom:1px solid var(--line); margin:18px 0 22px; overflow-x:auto; }
+  nav button { background:none; border:0; color:var(--muted); padding:10px 14px; cursor:pointer; font:inherit; letter-spacing:.06em; border-bottom:2px solid transparent; margin-bottom:-1px; white-space:nowrap; }
+  nav button:hover { color:var(--text); }
   nav button.active { color:var(--text); border-bottom-color:var(--accent); }
-  nav button .badge { display:inline-block; min-width:20px; padding:0 6px; margin-left:6px; border-radius:10px; background:var(--line); font-size:12px; text-align:center; }
+  nav button:focus-visible { outline:2px solid var(--text); outline-offset:-2px; }
+  nav button .badge { display:inline-block; min-width:20px; padding:0 6px; margin-left:8px; border-radius:10px; background:var(--faint); color:var(--text); font-size:11px; text-align:center; }
+  nav button .badge.hot { background:var(--accent); color:#fff; }
   section { display:none; }
   section.active { display:block; }
-  .drop { border:2px dashed var(--line); border-radius:12px; padding:48px 24px; text-align:center; background:var(--panel); transition:border-color .15s; }
-  .drop.over { border-color:var(--accent); }
-  .drop input { display:none; }
-  .drop .pick { display:inline-block; background:var(--accent); color:#fff; padding:10px 18px; border-radius:8px; cursor:pointer; font-weight:600; }
-  .drop .hint { color:var(--muted); margin-top:10px; font-size:13px; }
-  .file { margin-top:16px; color:var(--text); }
-  .row { display:flex; align-items:center; gap:14px; margin-top:16px; flex-wrap:wrap; }
-  .row label { color:var(--muted); font-size:14px; display:flex; align-items:center; gap:6px; }
-  button.go { background:var(--ok); color:#06241a; border:0; padding:10px 20px; border-radius:8px; font:inherit; font-weight:700; cursor:pointer; }
-  button.go:disabled { opacity:.5; cursor:default; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:12px; }
-  .card .top { display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
-  .card .name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .card .meta { color:var(--muted); font-size:13px; }
-  .bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin:12px 0 6px; }
+  .drop { border:1px dashed var(--faint); border-radius:2px; padding:52px 24px; text-align:center; background:var(--panel); transition:border-color .15s; }
+  .drop.over, .drop:focus-within { border-color:var(--text); }
+  .drop input { position:absolute; width:1px; height:1px; opacity:0; }
+  .drop .pick { display:inline-block; background:var(--text); color:var(--bg); padding:11px 22px; border-radius:2px; cursor:pointer; letter-spacing:.06em; }
+  .drop .pick:hover { opacity:.86; }
+  .drop .hint { color:var(--muted); margin-top:12px; font-size:12px; letter-spacing:.04em; }
+  .file { margin-top:16px; color:var(--text); font-size:13px; word-break:break-all; }
+  .row { display:flex; align-items:center; gap:18px; margin-top:18px; flex-wrap:wrap; }
+  .row label { color:var(--muted); font-size:13px; display:flex; align-items:center; gap:8px; }
+  .row input[type=checkbox] { accent-color:var(--accent); width:15px; height:15px; }
+  button.go { background:transparent; color:var(--text); border:1px solid var(--text); padding:11px 22px; border-radius:2px; font:inherit; letter-spacing:.06em; cursor:pointer; }
+  button.go:hover { background:var(--text); color:var(--bg); }
+  button.go:disabled { opacity:.35; cursor:default; background:transparent; color:var(--text); }
+  .note { color:var(--muted); font-size:12px; margin-top:20px; max-width:72ch; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:2px; padding:16px 18px; margin-bottom:12px; }
+  .card .top { display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  .card .name { font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .card .meta { color:var(--muted); font-size:12px; }
+  .bar { height:2px; background:var(--faint); overflow:hidden; margin:14px 0 8px; }
   .bar div { height:100%; background:var(--accent); width:0; transition:width .4s; }
   .err { color:var(--err); font-size:13px; white-space:pre-wrap; margin-top:8px; }
-  .actions { display:flex; gap:10px; margin-top:12px; }
-  a.dl { background:var(--accent); color:#fff; text-decoration:none; padding:8px 16px; border-radius:8px; font-weight:600; }
-  button.rm { background:none; border:1px solid var(--line); color:var(--muted); padding:8px 14px; border-radius:8px; cursor:pointer; font:inherit; }
-  .empty { color:var(--muted); padding:32px 0; text-align:center; }
-  dl { display:grid; grid-template-columns:max-content 1fr; gap:2px 14px; margin:10px 0 0; font-size:13px; }
-  dt { color:var(--muted); } dd { margin:0; }
+  .actions { display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; }
+  a.dl, button.ok { background:var(--text); color:var(--bg); border:1px solid var(--text); text-decoration:none; padding:9px 18px; border-radius:2px; font:inherit; letter-spacing:.06em; cursor:pointer; }
+  a.dl:hover, button.ok:hover { opacity:.86; }
+  button.rm, button.no { background:none; border:1px solid var(--faint); color:var(--muted); padding:9px 16px; border-radius:2px; cursor:pointer; font:inherit; letter-spacing:.06em; }
+  button.rm:hover { color:var(--text); border-color:var(--muted); }
+  button.no { border-color:var(--accent); color:var(--accent); }
+  button.no:hover { background:var(--accent); color:#fff; }
+  button:focus-visible, a.dl:focus-visible { outline:2px solid var(--text); outline-offset:3px; }
+  .empty { color:var(--muted); padding:36px 0; text-align:center; font-size:13px; }
+  dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; margin:12px 0 0; font-size:13px; }
+  dt { color:var(--muted); } dd { margin:0; min-width:0; overflow-wrap:anywhere; }
+  @media (max-width: 480px) { dl { grid-template-columns:1fr; gap:0 } dt { margin-top:6px; } }
+  @media (prefers-reduced-motion: reduce) { .bar div { transition:none; } }
 </style>
 </head>
 <body>
 <header>
-  <div class="top"><h1>codec399</h1><div class="who"><span>{{ user.email }}</span><form method="post" action="/logout"><button type="submit">Sign out</button></form></div></div>
-  <p>Re-encodes a video as a 399 fps VP9 stream: one frozen mosaic frame, with each real 30 fps frame shown for a single 2.5 ms slot.</p>
+  <div class="top">
+    <div class="brand"><img src="/static/logo.webp" alt=""><h1>Ghost</h1></div>
+    <div class="who"><span title="{{ user.email }}">{{ user.email }}</span><form method="post" action="/logout"><button type="submit">Sign out</button></form></div>
+  </div>
+  <p>codec399 encoder. Re-encodes a video as a 399 fps VP9 stream: one frozen mosaic frame, with each real 30 fps frame shown for a single 2.5 ms slot.</p>
 </header>
 <main>
   <nav>
     <button data-tab="upload" class="active">Upload</button>
     <button data-tab="processing">Processing<span class="badge" id="badge-processing">0</span></button>
     <button data-tab="finished">Finished<span class="badge" id="badge-finished">0</span></button>
+    <button data-tab="approval">Approval<span class="badge" id="badge-approval">0</span></button>
   </nav>
 
   <section id="tab-upload" class="active">
     <div class="drop" id="drop">
       <input type="file" id="file" accept="video/mp4,video/quicktime,video/*">
-      <label for="file" class="pick">Upload</label>
-      <div class="hint">or drop a video file here</div>
+      <label for="file" class="pick">Choose a video</label>
+      <div class="hint">or drop one here</div>
       <div class="file" id="filename"></div>
     </div>
     <div class="row">
@@ -72,11 +105,12 @@
       <label><input type="checkbox" id="encode_audio"> Encode Audio (cloaks the soundtrack; the video is unchanged)</label>
       <span class="meta" id="upload-status"></span>
     </div>
-    <p class="meta" style="margin-top:18px">Faithful mode is a two-pass encode at roughly 12 slots per second for a 1080x1920 source, so a two minute clip takes about an hour. Jobs run one at a time; you can queue several.</p>
+    <p class="note">Faithful mode is a two-pass encode at roughly 12 slots per second for a 1080x1920 source, so a two minute clip takes about an hour. Jobs run one at a time; you can queue several.</p>
   </section>
 
   <section id="tab-processing"><div id="processing-list"></div></section>
   <section id="tab-finished"><div id="finished-list"></div></section>
+  <section id="tab-approval"><div id="approval-list"></div></section>
 </main>
 
 <script>
@@ -92,7 +126,7 @@ const drop = $('#drop'), fileInput = $('#file'), go = $('#go');
 let picked = null;
 function setFile(f) {
   picked = f;
-  $('#filename').textContent = f ? `${f.name}  (${fmtBytes(f.size)})` : '';
+  $('#filename').textContent = f ? f.name : '';
   go.disabled = !f;
 }
 fileInput.addEventListener('change', () => setFile(fileInput.files[0] || null));
@@ -121,6 +155,7 @@ go.addEventListener('click', () => {
 
 function fmtBytes(n) { if (n == null) return ''; const u = ['B','KB','MB','GB']; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + ' ' + u[i]; }
 function fmtTime(s) { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
+function fmtDate(t) { if (!t) return ''; const d = new Date(t * 1000); return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); }
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 function stageText(j) {
@@ -158,18 +193,45 @@ function card(j) {
   return `<div class="card">${body}</div>`;
 }
 
+function approvalCard(r) {
+  return `<div class="card">
+    <div class="top"><div class="name" title="${esc(r.email)}">${esc(r.email)}</div><div class="meta">registered ${esc(fmtDate(r.created))}</div></div>
+    <dl><dt>Business Portfolio ID</dt><dd>${esc(r.portfolio_id || '')}</dd></dl>
+    <div class="actions"><button class="ok" data-email="${esc(r.email)}" data-decision="approve">Accept</button><button class="no" data-email="${esc(r.email)}" data-decision="decline">Decline</button></div>
+  </div>`;
+}
+
+function render(sel, html) {
+  const el = $(sel);
+  if (el.dataset.html === html) return 0;
+  el.innerHTML = html; el.dataset.html = html;
+  return 1;
+}
+
 async function refresh() {
-  let list;
-  let res;
-  try { res = await fetch('/api/jobs'); if (res.status === 401) { location.href = '/login?next=/'; return; } list = await res.json(); } catch (e) { return; }
+  let list, pending;
+  try {
+    const [a, b] = await Promise.all([fetch('/api/jobs'), fetch('/api/registrations')]);
+    if (a.status === 401 || b.status === 401) { location.href = '/login?next=/'; return; }
+    list = await a.json(); pending = await b.json();
+  } catch (e) { return; }
   const active = list.filter(j => j.status === 'queued' || j.status === 'processing');
   const done = list.filter(j => j.status === 'done' || j.status === 'error');
-  $('#processing-list').innerHTML = active.length ? active.map(card).join('') : '<div class="empty">Nothing is processing.</div>';
-  $('#finished-list').innerHTML = done.length ? done.map(card).join('') : '<div class="empty">No finished videos yet.</div>';
+  // Only touch the DOM when a list's content changes, so buttons keep focus and hover between polls.
+  const changed = render('#processing-list', active.length ? active.map(card).join('') : '<div class="empty">Nothing is processing.</div>')
+    | render('#finished-list', done.length ? done.map(card).join('') : '<div class="empty">No finished videos yet.</div>')
+    | render('#approval-list', pending.length ? pending.map(approvalCard).join('') : '<div class="empty">No registrations waiting.</div>');
   $('#badge-processing').textContent = active.length;
   $('#badge-finished').textContent = done.filter(j => j.status === 'done').length;
+  const ab = $('#badge-approval'); ab.textContent = pending.length; ab.classList.toggle('hot', pending.length > 0);
+  if (!changed) return;
   document.querySelectorAll('button.rm').forEach(b => b.addEventListener('click', async () => {
     await fetch('/api/jobs/' + b.dataset.id, { method: 'DELETE' }); refresh();
+  }));
+  document.querySelectorAll('#approval-list button[data-decision]').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true;
+    await fetch('/api/registrations/' + encodeURIComponent(b.dataset.email) + '/' + b.dataset.decision, { method: 'POST' });
+    refresh();
   }));
 }
 refresh();

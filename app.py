@@ -102,7 +102,7 @@ def _worker():
             work.task_done()
 
 
-PUBLIC_ENDPOINTS = {"login", "static"}
+PUBLIC_ENDPOINTS = {"login", "register", "static"}
 
 
 @app.before_request
@@ -140,6 +140,8 @@ def login():
         if user is None:
             time.sleep(0.5)  # blunt password guessing a little
             error = "That email and password don't match."
+        elif user["status"] != "active":
+            error = "Your registration is still waiting for approval."
         else:
             session.clear()
             session["email"] = user["email"]
@@ -147,6 +149,24 @@ def login():
             return redirect(_safe_next(request.args.get("next")))
     status = 401 if error else 200
     return render_template("login.html", error=error, email=email, next=request.args.get("next") or ""), status
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if session.get("email") and auth.get_user(session["email"]):
+        return redirect(url_for("index"))
+    form = {"email": "", "portfolio_id": ""}
+    error = None
+    if request.method == "POST":
+        form = {"email": (request.form.get("email") or "").strip(),
+                "portfolio_id": (request.form.get("portfolio_id") or "").strip()}
+        try:
+            auth.register(form["email"], request.form.get("password") or "", form["portfolio_id"])
+        except ValueError as exc:
+            error = str(exc)
+        else:
+            return render_template("register.html", done=True, email=form["email"].lower())
+    return render_template("register.html", error=error, **form), (400 if error else 200)
 
 
 @app.post("/logout")
@@ -165,6 +185,27 @@ def index():
 @app.get("/dashboard")
 def dashboard():
     return render_template("dashboard.html", user=g.user)
+
+
+@app.get("/api/registrations")
+def list_registrations():
+    _admin_only()
+    return jsonify(auth.pending())
+
+
+@app.post("/api/registrations/<path:email>/<decision>")
+def decide_registration(email, decision):
+    _admin_only()
+    try:
+        if decision == "approve":
+            auth.approve(email)
+        elif decision == "decline":
+            auth.decline(email)
+        else:
+            abort(404)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({"email": email.strip().lower(), "decision": decision})
 
 
 @app.get("/api/jobs")

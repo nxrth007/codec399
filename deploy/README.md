@@ -69,6 +69,11 @@ sudo -u codec399 CODEC399_JOBS_DIR=/var/lib/codec399 .venv/bin/python manage.py 
 `add-user` and `set-password` ask for the password without echo; `--password-stdin` reads it from
 the first line of stdin instead. Changes take effect on the next request, no restart needed.
 
+People can also register themselves from the sign-in page with an email, a password and their
+Business Portfolio ID. That creates a `pending` account that cannot sign in until an admin accepts
+it on the Approval tab of the encoder screen (or with `manage.py approve EMAIL`); declining removes
+the request.
+
 ## Updating
 
 ```bash

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ghost</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400;500&display=swap" rel="stylesheet">
+<style>
+  /* Layout: the sign-in page's black field with the logo, then a three-field form. */
+  :root {
+    --bg:#000; --fg:#f4f4f4; --dim:#6b6b6b; --faint:#2b2b2b; --field:#0d0d0d; --err:#ff5f5f; --ok:#9be7c4;
+    --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme:dark;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 var(--mono);
+    display:grid; place-items:center;
+    padding-block:24px;
+    padding-left:max(16px, env(safe-area-inset-left, 0px));
+    padding-right:max(16px, env(safe-area-inset-right, 0px));
+  }
+  .ghost { width:min(100%, 360px); display:grid; gap:28px; justify-items:start; }
+  .logo { width:min(60%, 180px); height:auto; display:block; justify-self:center; }
+  h1 { margin:0; font-weight:200; font-size:28px; letter-spacing:.08em; }
+  form { display:grid; gap:22px; width:100%; }
+  .field { display:grid; gap:6px; }
+  label { font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--dim); }
+  input {
+    width:100%; background:var(--field); color:var(--fg); border:0; border-bottom:1px solid var(--faint);
+    padding:10px 2px; font:inherit; outline:none; border-radius:0; transition:border-color .15s;
+  }
+  input:focus { border-bottom-color:var(--fg); }
+  input:-webkit-autofill { -webkit-box-shadow:0 0 0 100px var(--field) inset; -webkit-text-fill-color:var(--fg); }
+  .actions { display:flex; gap:12px; align-items:center; margin-top:6px; flex-wrap:wrap; }
+  button, a.secondary {
+    font:inherit; letter-spacing:.06em; padding:11px 22px; border-radius:2px; cursor:pointer; text-decoration:none;
+    border:1px solid var(--fg); background:var(--fg); color:var(--bg); transition:opacity .15s; display:inline-block;
+  }
+  button:hover { opacity:.86; }
+  button:focus-visible, a.secondary:focus-visible { outline:2px solid var(--fg); outline-offset:3px; }
+  a.secondary { background:transparent; color:var(--dim); border-color:var(--faint); }
+  a.secondary:hover { color:var(--fg); border-color:var(--dim); }
+  .error { color:var(--err); font-size:13px; }
+  .done { display:grid; gap:14px; color:var(--fg); }
+  .done p { margin:0; }
+  .done .ok { color:var(--ok); }
+  .hint { color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<main class="ghost">
+  <img class="logo" src="/static/logo.webp" alt="GhostRus">
+  {% if done %}
+  <div class="done">
+    <h1>Registered</h1>
+    <p class="ok">Your request for {{ email }} is in.</p>
+    <p>An admin reviews every registration. Once yours is accepted, sign in with the email and password you chose.</p>
+    <div class="actions"><a class="secondary" href="/login">Back to sign in</a></div>
+  </div>
+  {% else %}
+  <h1>Register</h1>
+  <form method="post" action="/register" autocomplete="on">
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required autofocus value="{{ email or '' }}">
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+      <div class="hint">At least 8 characters.</div>
+    </div>
+    <div class="field">
+      <label for="portfolio_id">Business Portfolio ID</label>
+      <input id="portfolio_id" name="portfolio_id" type="text" autocomplete="off" maxlength="64" required value="{{ portfolio_id or '' }}">
+    </div>
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <div class="actions">
+      <button type="submit">Request access</button>
+      <a class="secondary" href="/login">Back to sign in</a>
+    </div>
+  </form>
+  {% endif %}
+</main>
+</body>
+</html>

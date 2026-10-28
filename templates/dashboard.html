@@ -24,6 +24,8 @@
     padding-right:max(16px, env(safe-area-inset-right, 0px));
   }
   header { display:flex; justify-content:space-between; align-items:center; gap:16px; width:min(100%, 720px); margin:0 auto; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .brand img { width:40px; height:40px; display:block; }
   .wordmark { font-weight:200; font-size:26px; letter-spacing:.08em; margin:0; }
   .who { display:flex; align-items:center; gap:14px; color:var(--dim); font-size:12px; min-width:0; }
   .who span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -59,7 +61,7 @@
 </head>
 <body>
 <header>
-  <h1 class="wordmark">Ghost</h1>
+  <div class="brand"><img src="/static/logo.webp" alt=""><h1 class="wordmark">Ghost</h1></div>
   <div class="who"><span title="{{ user.email }}">{{ user.email }}</span><form method="post" action="/logout"><button type="submit">Sign out</button></form></div>
 </header>
 <main>

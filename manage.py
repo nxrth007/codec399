@@ -3,6 +3,8 @@
     python manage.py add-user EMAIL [--role admin|user] [--password-stdin]
     python manage.py set-password EMAIL [--password-stdin]
     python manage.py remove-user EMAIL
+    python manage.py approve EMAIL
+    python manage.py decline EMAIL
     python manage.py list-users
 
 Without --password-stdin the password is asked for twice without echo.  Set CODEC399_JOBS_DIR
@@ -30,7 +32,7 @@ def _password(args):
 def main(argv=None):
     p = argparse.ArgumentParser(description="Manage codec399 accounts.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    a = sub.add_parser("add-user", help="create an account")
+    a = sub.add_parser("add-user", help="create an active account")
     a.add_argument("email")
     a.add_argument("--role", choices=auth.ROLES, default="user")
     a.add_argument("--password-stdin", action="store_true", help="read the password from the first line of stdin")
@@ -39,7 +41,9 @@ def main(argv=None):
     s.add_argument("--password-stdin", action="store_true")
     r = sub.add_parser("remove-user", help="delete an account")
     r.add_argument("email")
-    sub.add_parser("list-users", help="show every account and its role")
+    sub.add_parser("approve", help="accept a pending registration").add_argument("email")
+    sub.add_parser("decline", help="remove a pending registration").add_argument("email")
+    sub.add_parser("list-users", help="show every account with its role and status")
     args = p.parse_args(argv)
 
     try:
@@ -52,13 +56,20 @@ def main(argv=None):
         elif args.cmd == "remove-user":
             auth.remove_user(args.email)
             print(f"Removed {args.email.strip().lower()}")
+        elif args.cmd == "approve":
+            auth.approve(args.email)
+            print(f"Approved {args.email.strip().lower()}")
+        elif args.cmd == "decline":
+            auth.decline(args.email)
+            print(f"Declined and removed {args.email.strip().lower()}")
         elif args.cmd == "list-users":
             users = auth.load_users()
             if not users:
                 print(f"No accounts in {auth.USERS_FILE}")
             for email, u in sorted(users.items()):
                 created = time.strftime("%Y-%m-%d", time.gmtime(u.get("created", 0)))
-                print(f"{u.get('role', 'user'):6}  {email}  (created {created})")
+                extra = f"  portfolio {u['portfolio_id']}" if u.get("portfolio_id") else ""
+                print(f"{u.get('role', 'user'):6} {u.get('status', 'active'):8} {email}  (created {created}){extra}")
     except ValueError as exc:
         sys.exit(str(exc))
 
