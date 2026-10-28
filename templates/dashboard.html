@@ -10,7 +10,7 @@
 <style>
   /* Layout: the same black field as the sign-in page; a thin top bar, then one upload target. */
   :root {
-    --bg:#000; --fg:#f4f4f4; --dim:#6b6b6b; --faint:#2b2b2b; --field:#0d0d0d; --ok:#9be7c4; --err:#ff5f5f;
+    --bg:#000; --fg:#f4f4f4; --dim:#6b6b6b; --faint:#2b2b2b; --field:#0d0d0d; --ok:#9be7c4; --err:#ff5f5f; --warn:#f0c674;
     --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     color-scheme:dark;
   }
@@ -33,9 +33,9 @@
   .who button { background:none; border:0; color:var(--dim); font:inherit; letter-spacing:.06em; cursor:pointer; padding:4px 0; text-decoration:underline; text-underline-offset:4px; }
   .who button:hover, .who button:focus-visible { color:var(--fg); outline:none; }
   main { display:grid; place-items:center; }
-  .panel { width:min(100%, 520px); display:grid; gap:18px; }
+  .panel { width:min(100%, 560px); display:grid; gap:18px; }
   .drop {
-    border:1px dashed var(--faint); border-radius:2px; padding:56px 24px; text-align:center;
+    border:1px dashed var(--faint); border-radius:2px; padding:44px 24px 28px; text-align:center;
     background:var(--field); transition:border-color .15s; display:grid; gap:14px; justify-items:center;
   }
   .drop.over, .drop:focus-within { border-color:var(--fg); }
@@ -46,7 +46,11 @@
   }
   .pick:hover { opacity:.86; }
   .hint { color:var(--dim); font-size:12px; letter-spacing:.04em; }
-  .name { color:var(--fg); font-size:13px; word-break:break-all; }
+  .files { display:grid; gap:3px; font-size:13px; width:100%; }
+  .files div { display:flex; justify-content:space-between; gap:12px; }
+  .files .n { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .files .d { color:var(--dim); white-space:nowrap; }
+  .files .skip .n, .files .skip .d { color:var(--err); }
   .row { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
   button.go { font:inherit; letter-spacing:.06em; padding:11px 22px; border-radius:2px; cursor:pointer; border:1px solid var(--fg); background:transparent; color:var(--fg); }
   button.go:hover { background:var(--fg); color:var(--bg); }
@@ -54,9 +58,11 @@
   button:focus-visible { outline:2px solid var(--fg); outline-offset:3px; }
   .bar { height:2px; background:var(--faint); overflow:hidden; }
   .bar div { height:100%; background:var(--fg); width:0; transition:width .3s; }
-  .status { color:var(--dim); font-size:13px; min-height:1.6em; }
+  .status { color:var(--dim); font-size:13px; min-height:1.6em; overflow-wrap:anywhere; }
   .status.ok { color:var(--ok); }
   .status.err { color:var(--err); }
+  .warn { border:1px solid var(--warn); color:var(--warn); border-radius:2px; padding:12px 16px; font-size:13px; }
+  .warn b { font-weight:500; }
   .modal { position:fixed; inset:0; background:rgba(0,0,0,.82); display:grid; place-items:center;
     padding-left:max(16px, env(safe-area-inset-left, 0px)); padding-right:max(16px, env(safe-area-inset-right, 0px)); z-index:10; }
   .modal .box { width:min(100%, 400px); background:var(--bg); border:1px solid var(--faint); border-radius:2px; padding:28px 26px; display:grid; gap:18px; }
@@ -77,74 +83,137 @@
 <main>
   <div class="panel">
     <div class="drop" id="drop">
-      <input type="file" id="file" accept="video/mp4,video/quicktime,video/*">
-      <label for="file" class="pick">Choose a video</label>
-      <div class="hint">or drop one here</div>
-      <div class="name" id="filename"></div>
+      <input type="file" id="file" accept="video/mp4,video/quicktime,video/*" multiple>
+      <label for="file" class="pick">Choose videos</label>
+      <div class="hint">or drop them here. Up to {{ max_batch }} per batch. Each video must be {{ max_seconds // 60 }}:{{ '%02d' % (max_seconds % 60) }} or shorter.</div>
+      <div class="files" id="files"></div>
     </div>
     <div class="row">
       <button class="go" id="go" disabled>Upload</button>
       <div class="status" id="status"></div>
     </div>
+    <div class="warn" id="warn" hidden><b>Keep this page open</b> until every video says Received. Leaving early stops the uploads still in progress, and those videos will not reach us.</div>
     <div class="bar" id="bar" hidden><div></div></div>
   </div>
 </main>
 <div class="modal" id="ask" hidden role="dialog" aria-modal="true" aria-labelledby="ask-title">
   <div class="box">
     <h2 id="ask-title">Do you want to encode Audio?</h2>
-    <p>Yes cloaks the soundtrack. The video is processed either way.</p>
+    <p id="ask-note">Yes cloaks the soundtrack. The video is processed either way.</p>
     <div class="choices"><button type="button" id="ask-yes">Yes</button><button type="button" id="ask-no" class="no">No</button></div>
   </div>
 </div>
 <script>
+const MAX_BATCH = {{ max_batch }}, MAX_SECONDS = {{ max_seconds }};
 const $ = s => document.querySelector(s);
-const drop = $('#drop'), fileInput = $('#file'), go = $('#go'), status = $('#status'), bar = $('#bar');
-let picked = null;
+const drop = $('#drop'), fileInput = $('#file'), go = $('#go'), status = $('#status'), bar = $('#bar'), warn = $('#warn'), ask = $('#ask');
+let picked = [];      // [{file, duration, tooLong}]
+let busy = false;
+let currentAudio = false;
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function mmss(s) { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 function setStatus(text, kind) { status.textContent = text; status.className = 'status' + (kind ? ' ' + kind : ''); }
-function setFile(f) { picked = f; $('#filename').textContent = f ? f.name : ''; go.disabled = !f; if (f) setStatus(''); }
-fileInput.addEventListener('change', () => setFile(fileInput.files[0] || null));
+
+// Read the duration with the browser's own decoder so an over-long video is refused before it uploads.
+// Files the browser cannot read are sent anyway; the server checks again.
+function duration(file) {
+  return new Promise(resolve => {
+    const v = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    let settled = false;
+    const done = d => { if (settled) return; settled = true; URL.revokeObjectURL(url); resolve(d); };
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => done(isFinite(v.duration) ? v.duration : null);
+    v.onerror = () => done(null);
+    setTimeout(() => done(null), 8000);
+    v.src = url;
+  });
+}
+
+function renderList() {
+  $('#files').innerHTML = picked.map(p => `<div class="${p.tooLong ? 'skip' : ''}"><span class="n">${esc(p.file.name)}</span><span class="d">${p.duration == null ? '' : mmss(p.duration)}${p.tooLong ? ' · over the limit, will not be uploaded' : ''}</span></div>`).join('');
+  const ready = picked.filter(p => !p.tooLong).length;
+  go.textContent = ready > 1 ? `Upload ${ready} videos` : 'Upload';
+  go.disabled = busy || ready === 0;
+}
+
+async function setFiles(list) {
+  let files = Array.from(list || []).filter(f => f && f.name);
+  let notice = '';
+  if (files.length > MAX_BATCH) { notice = `Up to ${MAX_BATCH} videos per batch; the first ${MAX_BATCH} were kept.`; files = files.slice(0, MAX_BATCH); }
+  picked = files.map(f => ({ file: f, duration: null, tooLong: false }));
+  renderList();
+  setStatus(files.length ? 'Checking lengths…' : '');
+  await Promise.all(picked.map(async p => { p.duration = await duration(p.file); p.tooLong = p.duration != null && p.duration > MAX_SECONDS; }));
+  renderList();
+  const skipped = picked.filter(p => p.tooLong).length;
+  const parts = [];
+  if (notice) parts.push(notice);
+  if (skipped) parts.push(`You can't upload a video longer than ${mmss(MAX_SECONDS)}. ${skipped === 1 ? 'One video is' : skipped + ' videos are'} over that and will not be uploaded; the rest will.`);
+  setStatus(parts.join(' '), skipped ? 'err' : '');
+}
+fileInput.addEventListener('change', () => setFiles(fileInput.files));
 ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) setFile(f); });
+drop.addEventListener('drop', e => { if (!busy && e.dataTransfer.files.length) setFiles(e.dataTransfer.files); });
 
-const ask = $('#ask');
 function closeAsk() { ask.hidden = true; go.focus(); }
-go.addEventListener('click', () => { if (!picked) return; ask.hidden = false; $('#ask-yes').focus(); });
+go.addEventListener('click', () => {
+  const ready = picked.filter(p => !p.tooLong);
+  if (busy || !ready.length) return;
+  $('#ask-note').textContent = (ready.length > 1 ? `Applies to all ${ready.length} videos. ` : '') + 'Yes cloaks the soundtrack. The video is processed either way.';
+  ask.hidden = false; $('#ask-yes').focus();
+});
 $('#ask-yes').addEventListener('click', () => start(true));
 $('#ask-no').addEventListener('click', () => start(false));
 ask.addEventListener('click', e => { if (e.target === ask) closeAsk(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !ask.hidden) closeAsk(); });
+window.addEventListener('beforeunload', e => { if (busy) { e.preventDefault(); e.returnValue = ''; } });
 
-function start(encodeAudio) {
+function uploadOne(file, index, total) {
+  return new Promise(resolve => {
+    const fd = new FormData();
+    fd.append('video', file);
+    fd.append('encode_audio', currentAudio ? '1' : '0');
+    const label = total > 1 ? `${index + 1} of ${total}: ${file.name}` : file.name;
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/jobs');
+    xhr.upload.onprogress = e => {
+      if (!e.lengthComputable) return;
+      const pct = Math.round(e.loaded / e.total * 100);
+      bar.firstElementChild.style.width = pct + '%';
+      setStatus(`Uploading ${label} ${pct}%`);
+    };
+    xhr.onload = () => {
+      if (xhr.status === 201) resolve(null);
+      else if (xhr.status === 401) resolve('signed out');
+      else { let msg = String(xhr.status); try { msg = JSON.parse(xhr.responseText).error || msg; } catch (e) {} resolve(`${file.name}: ${msg}`); }
+    };
+    xhr.onerror = () => resolve(`${file.name}: upload failed, check your connection`);
+    xhr.send(fd);
+  });
+}
+
+async function start(encodeAudio) {
   ask.hidden = true;
-  if (!picked) return;
-  const fd = new FormData();
-  fd.append('video', picked);
-  fd.append('encode_audio', encodeAudio ? '1' : '0');
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/jobs');
-  go.disabled = true; bar.hidden = false;
-  xhr.upload.onprogress = e => {
-    if (!e.lengthComputable) return;
-    const pct = Math.round(e.loaded / e.total * 100);
-    bar.firstElementChild.style.width = pct + '%';
-    setStatus('Uploading ' + pct + '%');
-  };
-  xhr.onload = () => {
-    bar.hidden = true; bar.firstElementChild.style.width = '0';
-    if (xhr.status === 201) {
-      setStatus('Received. ' + picked.name + ' is in the queue.', 'ok');
-      setFile(null); fileInput.value = '';
-    } else if (xhr.status === 401) {
-      location.href = '/login?next=/dashboard';
-    } else {
-      let msg = 'Upload failed.';
-      try { msg = 'Upload failed: ' + (JSON.parse(xhr.responseText).error || xhr.status); } catch (e) {}
-      setStatus(msg, 'err'); go.disabled = false;
-    }
-  };
-  xhr.onerror = () => { bar.hidden = true; setStatus('Upload failed. Check your connection and try again.', 'err'); go.disabled = false; };
-  xhr.send(fd);
+  const files = picked.filter(p => !p.tooLong).map(p => p.file);
+  if (busy || !files.length) return;
+  currentAudio = encodeAudio;
+  busy = true; go.disabled = true; warn.hidden = false; bar.hidden = false;
+  const failures = [];
+  let sent = 0;
+  for (let i = 0; i < files.length; i++) {
+    bar.firstElementChild.style.width = '0';
+    const err = await uploadOne(files[i], i, files.length);
+    if (err === 'signed out') { location.href = '/login?next=/dashboard'; return; }
+    if (err) failures.push(err); else sent++;
+  }
+  busy = false; warn.hidden = true; bar.hidden = true; bar.firstElementChild.style.width = '0';
+  picked = []; fileInput.value = ''; renderList();
+  if (sent && !failures.length) setStatus(sent === 1 ? `Received. ${files[0].name} is in the queue.` : `Received. ${sent} videos are in the queue.`, 'ok');
+  else if (sent) setStatus(`Received ${sent} of ${files.length}. Not sent: ${failures.join(' · ')}`, 'err');
+  else setStatus('Nothing was sent: ' + failures.join(' · '), 'err');
 }
 </script>
 </body>

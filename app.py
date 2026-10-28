@@ -2,6 +2,7 @@
 import json
 import os
 import queue
+import shutil
 import threading
 import time
 import uuid
@@ -31,13 +32,20 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
                   PERMANENT_SESSION_LIFETIME=14 * 24 * 3600)
 # Jobs queued or running at once before new uploads are refused.
 MAX_QUEUE = int(os.environ.get("CODEC399_MAX_QUEUE", "10"))
-# Uploads from user accounts at least this long are encoded in Fast mode automatically; jobs started
+# Uploads from user accounts longer than this are encoded in Fast mode automatically; jobs started
 # from the admin panel keep whatever the admin chose.
-AUTO_FAST_SECONDS = float(os.environ.get("CODEC399_AUTO_FAST_SECONDS", "240"))
+AUTO_FAST_SECONDS = float(os.environ.get("CODEC399_AUTO_FAST_SECONDS", "210"))
+# Uploads from user accounts longer than this are refused; admins have no cap.
+USER_MAX_SECONDS = float(os.environ.get("CODEC399_USER_MAX_SECONDS", "360"))
 
 jobs = {}
 lock = threading.Lock()
 work = queue.Queue()
+
+
+def _mmss(seconds):
+    seconds = int(round(seconds))
+    return f"{seconds // 60}:{seconds % 60:02d}"
 
 
 def _public(job):
@@ -187,7 +195,7 @@ def index():
 
 @app.get("/dashboard")
 def dashboard():
-    return render_template("dashboard.html", user=g.user)
+    return render_template("dashboard.html", user=g.user, max_seconds=int(USER_MAX_SECONDS), max_batch=8)
 
 
 @app.get("/api/registrations")
@@ -265,12 +273,17 @@ def create_job():
     file.save(path)
     fast = request.form.get("fast") in ("1", "true", "on")
     fast_auto = False
-    if g.user["role"] != "admin" and not fast:
+    if g.user["role"] != "admin":
         try:
-            fast_auto = pipeline.probe(path)["duration"] >= AUTO_FAST_SECONDS
+            duration = pipeline.probe(path)["duration"]
         except Exception:  # noqa: BLE001 - an unreadable file fails properly once the job runs
-            fast_auto = False
-        fast = fast or fast_auto
+            duration = None
+        if duration is not None and duration > USER_MAX_SECONDS:
+            shutil.rmtree(jdir, ignore_errors=True)
+            return jsonify({"error": f"You can't upload a video longer than {_mmss(USER_MAX_SECONDS)}; this one is {_mmss(duration)}."}), 413
+        if duration is not None and not fast:
+            fast_auto = duration > AUTO_FAST_SECONDS
+            fast = fast_auto
     job = {
         "id": jid, "name": name, "ext": ext, "status": "queued", "stage": "queued", "progress": 0.0,
         "created": time.time(), "started": None, "finished": None, "error": None, "summary": None,
