@@ -140,7 +140,7 @@
     <div class="drop" id="drop">
       <input type="file" id="file" accept="video/mp4,video/quicktime,video/*" multiple>
       <label for="file" class="pick">Choose videos</label>
-      <div class="hint">Pick several at once (hold Ctrl or Shift in the file dialog) or drop a batch here. Each becomes its own job with the options below, and they upload one after another after a single click.</div>
+      <div class="hint">Pick up to {{ max_batch }} at once (hold Ctrl or Shift in the file dialog) or drop a batch here. Each becomes its own job with the options below, and they upload one after another after a single click. Admin jobs go to the front of the queue.</div>
       <div class="file" id="filename"></div>
     </div>
     <div class="row">
@@ -150,7 +150,7 @@
       <span class="meta" id="upload-status"></span>
     </div>
     <div class="warn" id="upload-warn" hidden><b>Keep this tab open</b> until every video has uploaded. You can use other tabs or windows meanwhile; closing this one stops the uploads still in progress. Encoding then runs on the server on its own.</div>
-    <p class="note">Faithful mode is a two-pass encode at roughly 12 slots per second for a 1080x1920 source, so a two minute clip takes about an hour. Jobs run one at a time; you can queue several.</p>
+    <p class="note">Faithful mode is a two-pass encode at roughly 12 slots per second for a 1080x1920 source, so a two minute clip takes about an hour. Two jobs encode at once by default (see Settings); admin jobs start before everyone else's.</p>
   </section>
 
   <section id="tab-processing"><div id="processing-list"></div></section>
@@ -174,8 +174,14 @@
     <div class="setting">
       <label for="set-batch">Videos a user may upload per batch</label>
       <div class="ctl"><input id="set-batch" type="number" min="1" max="50" step="1" inputmode="numeric"><span class="unit">videos</span><button type="button" class="ok" data-set="user_max_batch" data-input="set-batch">Set</button></div>
-      <div class="now">Now: <b id="now-batch">…</b>. Whole number from 1 to 50. Admins have no batch limit.</div>
+      <div class="now">Now: <b id="now-batch">…</b>. Whole number from 1 to 50. Admins can send up to {{ max_batch }} per batch.</div>
       <div class="msg" id="msg-batch"></div>
+    </div>
+    <div class="setting">
+      <label for="set-jobs">Jobs encoded at the same time</label>
+      <div class="ctl"><input id="set-jobs" type="number" min="1" max="8" step="1" inputmode="numeric"><span class="unit">jobs</span><button type="button" class="ok" data-set="concurrent_jobs" data-input="set-jobs">Set</button></div>
+      <div class="now">Now: <b id="now-jobs">…</b>. Each faithful encode uses about one and a half cores, so two fit on four cores; three slows every job a little. Admin jobs always start before user and media buyer jobs. Takes effect as the next job starts.</div>
+      <div class="msg" id="msg-jobs"></div>
     </div>
     <p class="note">Changes apply to the next upload. The user dashboard shows the new limits the next time it loads.</p>
   </div></section>
@@ -193,13 +199,16 @@ tabs.forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
 
 const drop = $('#drop'), fileInput = $('#file'), go = $('#go');
 let picked = [];
+const MAX_BATCH = {{ max_batch }};
 function setFiles(list) {
   picked = Array.from(list || []).filter(f => f && f.name);
+  const trimmed = picked.length > MAX_BATCH;
+  if (trimmed) picked = picked.slice(0, MAX_BATCH);
   const head = picked.length ? `<div class="head">${picked.length} video${picked.length === 1 ? '' : 's'} selected</div>` : '';
   const shown = picked.slice(0, 10).map((f, i) => `<div class="item"><span class="n"><i>${i + 1}.</i>${esc(f.name)}</span><span class="sz">${fmtBytes(f.size)}</span></div>`).join('');
   const more = picked.length > 10 ? `<div class="more">and ${picked.length - 10} more</div>` : '';
   $('#filename').innerHTML = head + shown + more;
-  $('#upload-status').textContent = ''; $('#upload-status').className = 'meta';
+  $('#upload-status').textContent = trimmed ? `Up to ${MAX_BATCH} videos per batch; the first ${MAX_BATCH} were kept.` : ''; $('#upload-status').className = 'meta';
   go.textContent = picked.length > 1 ? `Process ${picked.length} videos` : 'Process video';
   go.disabled = picked.length === 0;
 }
@@ -296,6 +305,8 @@ function showLimits(v) {
   $('#now-fast').textContent = mmss(v.auto_fast_seconds);
   $('#now-batch').textContent = v.user_max_batch;
   const nb = $('#set-batch'); if (document.activeElement !== nb && nb.value === '') nb.placeholder = v.user_max_batch;
+  $('#now-jobs').textContent = v.concurrent_jobs;
+  const nj = $('#set-jobs'); if (document.activeElement !== nj && nj.value === '') nj.placeholder = v.concurrent_jobs;
   for (const [id, key] of [['set-max', 'user_max_seconds'], ['set-fast', 'auto_fast_seconds']]) {
     const el = $('#' + id); if (document.activeElement !== el && el.value === '') el.placeholder = (v[key] / 60).toFixed(1).replace(/\.0$/, '');
   }
@@ -387,7 +398,7 @@ document.addEventListener('click', async (e) => {
   if (set) {
     const input = $('#' + set.dataset.input), msg = $('#msg-' + set.dataset.input.replace('set-', ''));
     const n = parseFloat(input.value);
-    if (!(n >= 0)) { msg.textContent = set.dataset.set === 'user_max_batch' ? 'Enter a whole number of videos.' : 'Enter a number of minutes.'; msg.className = 'msg err'; return; }
+    if (!(n >= 0)) { msg.textContent = set.dataset.set === 'user_max_batch' ? 'Enter a whole number of videos.' : set.dataset.set === 'concurrent_jobs' ? 'Enter a whole number of jobs.' : 'Enter a number of minutes.'; msg.className = 'msg err'; return; }
     set.disabled = true;
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [set.dataset.set]: n }) });

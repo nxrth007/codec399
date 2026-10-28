@@ -1,4 +1,5 @@
 """codec399 web app: upload a video, run the methodology, download the result."""
+import itertools
 import json
 import os
 import queue
@@ -32,13 +33,18 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
                   SESSION_COOKIE_SECURE=os.environ.get("CODEC399_BEHIND_PROXY") == "1",
                   PERMANENT_SESSION_LIFETIME=14 * 24 * 3600)
 # Jobs queued or running at once before new uploads are refused.
-MAX_QUEUE = int(os.environ.get("CODEC399_MAX_QUEUE", "10"))
+MAX_QUEUE = int(os.environ.get("CODEC399_MAX_QUEUE", "40"))
+# Admins may send this many videos in one batch from the encoder screen.
+ADMIN_MAX_BATCH = 10
 # The user upload length cap and the automatic Fast cutoff live in settings.py: they start from
 # CODEC399_USER_MAX_SECONDS / CODEC399_AUTO_FAST_SECONDS and are editable on the Settings tab.
 
 jobs = {}
 lock = threading.Lock()
-work = queue.Queue()
+# Waiting jobs, admin uploads first, then by arrival; the dispatcher starts them as slots free up.
+work = queue.PriorityQueue()
+_seq = itertools.count()
+running = set()
 
 
 def _mmss(seconds):
@@ -101,14 +107,37 @@ def _run(job):
                 pass
 
 
-def _worker():
+def _enqueue(job):
+    priority = 0 if job.get("owner_role") == "admin" else 1
+    work.put((priority, job["created"], next(_seq), job))
+
+
+def _run_and_release(job):
+    try:
+        if not job["cancel"].is_set():
+            _run(job)
+    finally:
+        with lock:
+            running.discard(job["id"])
+
+
+def _dispatcher():
+    """Keep up to `concurrent_jobs` (a live setting) encodes running; admin jobs start first."""
     while True:
-        job = work.get()
+        with lock:
+            free = len(running) < max(1, int(settings.get("concurrent_jobs")))
+        if not free:
+            time.sleep(0.5)
+            continue
         try:
-            if not job["cancel"].is_set():
-                _run(job)
-        finally:
-            work.task_done()
+            _priority, _created, _n, job = work.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        if job["cancel"].is_set():
+            continue
+        with lock:
+            running.add(job["id"])
+        threading.Thread(target=_run_and_release, args=(job,), daemon=True).start()
 
 
 PUBLIC_ENDPOINTS = {"login", "register", "static"}
@@ -198,7 +227,7 @@ def logout():
 def index():
     if g.user["role"] not in ("admin", "media_buyer"):
         return redirect(url_for("dashboard"))
-    return render_template("index.html", user=g.user, is_admin=g.user["role"] == "admin")
+    return render_template("index.html", user=g.user, is_admin=g.user["role"] == "admin", max_batch=ADMIN_MAX_BATCH)
 
 
 @app.get("/dashboard")
@@ -255,7 +284,7 @@ def get_settings():
 
 @app.post("/api/settings")
 def set_settings():
-    """Body: {"user_max_minutes": 6, "auto_fast_minutes": 3.5, "user_max_batch": 8}; any key may be omitted."""
+    """Body: {"user_max_minutes": 6, "auto_fast_minutes": 3.5, "user_max_batch": 8, "concurrent_jobs": 2}; any key may be omitted."""
     _admin_only()
     body = request.get_json(silent=True) or {}
     changes = {}
@@ -265,8 +294,9 @@ def set_settings():
                 changes[key] = float(body[field]) * 60
             except (TypeError, ValueError):
                 return jsonify({"error": "Enter a number of minutes."}), 400
-    if "user_max_batch" in body:
-        changes["user_max_batch"] = body["user_max_batch"]
+    for key in ("user_max_batch", "concurrent_jobs"):
+        if key in body:
+            changes[key] = body[key]
     if not changes:
         return jsonify({"error": "Nothing to set."}), 400
     try:
@@ -348,13 +378,13 @@ def create_job():
         "fast": fast, "fast_auto": fast_auto,
         "encode_audio": request.form.get("encode_audio") in ("1", "true", "on"),
         "input_bytes": os.path.getsize(path),
-        "owner": g.user["email"],
+        "owner": g.user["email"], "owner_role": g.user["role"],
         "output_name": os.path.splitext(name)[0] + "_codec399.mp4",
         "cancel": threading.Event(),
     }
     with lock:
         jobs[jid] = job
-    work.put(job)
+    _enqueue(job)
     return jsonify(_public(job)), 201
 
 
@@ -398,7 +428,7 @@ def delete_job(jid):
 
 
 _load_existing()
-threading.Thread(target=_worker, daemon=True).start()
+threading.Thread(target=_dispatcher, daemon=True).start()
 
 if __name__ == "__main__":
     host = os.environ.get("HOST", "127.0.0.1")

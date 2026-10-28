@@ -72,7 +72,8 @@ different port.
    A `media_buyer` account gets these three tabs too but sees, downloads and removes only its own
    jobs. New users register from the
    sign-in page and wait in the admin's **Approval** tab until accepted.
-2. **Processing** tab: progress bar with a time estimate. Jobs run one at a time and queue.
+2. **Processing** tab: progress bar with a time estimate. Two jobs run at a time by default (a
+   Settings-tab value) and admin jobs start first; the rest queue.
 3. **Finished** tab: Download, plus a summary of the stream that was produced.
 
 Faithful mode is a two-pass encode and runs at about 12 slots per second for a 1080x1920 source,

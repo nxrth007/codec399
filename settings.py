@@ -20,7 +20,10 @@ FIELDS = {
                           "User uploads longer than this use Fast encode"),
     "user_max_batch": ("CODEC399_USER_MAX_BATCH", 8.0, 1.0, 50.0,
                        "Videos a user may upload per batch"),
+    "concurrent_jobs": ("CODEC399_CONCURRENT_JOBS", 2.0, 1.0, 8.0,
+                        "Jobs encoded at the same time"),
 }
+COUNTS = ("user_max_batch", "concurrent_jobs")
 
 _lock = threading.Lock()
 
@@ -64,7 +67,7 @@ def update(changes):
                 val = float(raw)
             except (TypeError, ValueError):
                 raise ValueError(f"{label}: enter a number.")
-            if key == "user_max_batch":
+            if key in COUNTS:
                 if val != int(val) or not (lo <= val <= hi):
                     raise ValueError(f"{label}: enter a whole number from {lo:g} to {hi:g}.")
                 values[key] = float(int(val))

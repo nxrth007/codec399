@@ -21,16 +21,18 @@ The app itself reads these environment variables:
 | `CODEC399_SECRET_KEY` | Session-cookie signing key, default kept in `secret.key` next to the accounts file |
 | `CODEC399_JOBS_DIR` | Where uploads and outputs live, default `jobs/` next to the code |
 | `CODEC399_BEHIND_PROXY` | `1` to trust one reverse proxy's forwarded headers |
-| `CODEC399_MAX_QUEUE` | Jobs queued or running before new uploads get a 429, default 10 |
+| `CODEC399_MAX_QUEUE` | Jobs queued or running before new uploads get a 429, default 40 |
+| `CODEC399_CONCURRENT_JOBS` | Encodes running at the same time, default 2 (each uses about 1.5 cores) |
 | `CODEC399_AUTO_FAST_SECONDS` | User uploads longer than this use Fast encode automatically, default 210 (3:30) |
 | `CODEC399_USER_MAX_SECONDS` | User uploads longer than this are refused, default 360 (6:00); admins have no cap |
 | `CODEC399_USER_MAX_BATCH` | Videos a user may upload per batch, default 8 |
 
-The last three are starting values: admins change them on the Settings tab of the encoder screen,
+The last four are starting values: admins change them on the Settings tab of the encoder screen,
 and the saved values in `/var/lib/codec399/settings.json` win over the environment.
 | `HOST`, `PORT` | Bind address for `python app.py`; gunicorn uses its own `--bind` |
 
-Jobs run one at a time. Faithful mode on a 1080x1920 source runs at about 12 slots per second,
+Two jobs run at a time by default (a Settings-tab value), admin jobs first; a faithful encode uses
+about one and a half cores. Faithful mode on a 1080x1920 source runs at about 12 slots per second,
 so a two minute clip takes around an hour on four cores.
 
 ## Steps
