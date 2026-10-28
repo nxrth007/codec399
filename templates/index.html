@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>codec399</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#e6e8ee; --muted:#8b93a7; --accent:#5b8cff; --ok:#3ecf8e; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { padding:28px 24px 12px; max-width:860px; margin:0 auto; }
+  header h1 { margin:0; font-size:22px; letter-spacing:.3px; }
+  header p { margin:4px 0 0; color:var(--muted); }
+  main { max-width:860px; margin:0 auto; padding:0 24px 48px; }
+  nav { display:flex; gap:6px; border-bottom:1px solid var(--line); margin:16px 0 20px; }
+  nav button { background:none; border:0; color:var(--muted); padding:10px 14px; cursor:pointer; font:inherit; border-bottom:2px solid transparent; }
+  nav button.active { color:var(--text); border-bottom-color:var(--accent); }
+  nav button .badge { display:inline-block; min-width:20px; padding:0 6px; margin-left:6px; border-radius:10px; background:var(--line); font-size:12px; text-align:center; }
+  section { display:none; }
+  section.active { display:block; }
+  .drop { border:2px dashed var(--line); border-radius:12px; padding:48px 24px; text-align:center; background:var(--panel); transition:border-color .15s; }
+  .drop.over { border-color:var(--accent); }
+  .drop input { display:none; }
+  .drop .pick { display:inline-block; background:var(--accent); color:#fff; padding:10px 18px; border-radius:8px; cursor:pointer; font-weight:600; }
+  .drop .hint { color:var(--muted); margin-top:10px; font-size:13px; }
+  .file { margin-top:16px; color:var(--text); }
+  .row { display:flex; align-items:center; gap:14px; margin-top:16px; flex-wrap:wrap; }
+  .row label { color:var(--muted); font-size:14px; display:flex; align-items:center; gap:6px; }
+  button.go { background:var(--ok); color:#06241a; border:0; padding:10px 20px; border-radius:8px; font:inherit; font-weight:700; cursor:pointer; }
+  button.go:disabled { opacity:.5; cursor:default; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:12px; }
+  .card .top { display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
+  .card .name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card .meta { color:var(--muted); font-size:13px; }
+  .bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin:12px 0 6px; }
+  .bar div { height:100%; background:var(--accent); width:0; transition:width .4s; }
+  .err { color:var(--err); font-size:13px; white-space:pre-wrap; margin-top:8px; }
+  .actions { display:flex; gap:10px; margin-top:12px; }
+  a.dl { background:var(--accent); color:#fff; text-decoration:none; padding:8px 16px; border-radius:8px; font-weight:600; }
+  button.rm { background:none; border:1px solid var(--line); color:var(--muted); padding:8px 14px; border-radius:8px; cursor:pointer; font:inherit; }
+  .empty { color:var(--muted); padding:32px 0; text-align:center; }
+  dl { display:grid; grid-template-columns:max-content 1fr; gap:2px 14px; margin:10px 0 0; font-size:13px; }
+  dt { color:var(--muted); } dd { margin:0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>codec399</h1>
+  <p>Re-encodes a video as a 399 fps VP9 stream: one frozen mosaic frame, with each real 30 fps frame shown for a single 2.5 ms slot.</p>
+</header>
+<main>
+  <nav>
+    <button data-tab="upload" class="active">Upload</button>
+    <button data-tab="processing">Processing<span class="badge" id="badge-processing">0</span></button>
+    <button data-tab="finished">Finished<span class="badge" id="badge-finished">0</span></button>
+  </nav>
+
+  <section id="tab-upload" class="active">
+    <div class="drop" id="drop">
+      <input type="file" id="file" accept="video/mp4,video/quicktime,video/*">
+      <label for="file" class="pick">Upload</label>
+      <div class="hint">or drop a video file here</div>
+      <div class="file" id="filename"></div>
+    </div>
+    <div class="row">
+      <button class="go" id="go" disabled>Process video</button>
+      <label><input type="checkbox" id="fast"> Fast encode (lower quality, several times quicker)</label>
+      <span class="meta" id="upload-status"></span>
+    </div>
+    <p class="meta" style="margin-top:18px">Faithful mode encodes at roughly 45 slots per second for a 1080x1920 source, so a two minute clip takes about 15 to 20 minutes. Jobs run one at a time; you can queue several.</p>
+  </section>
+
+  <section id="tab-processing"><div id="processing-list"></div></section>
+  <section id="tab-finished"><div id="finished-list"></div></section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const tabs = document.querySelectorAll('nav button');
+function showTab(name) {
+  tabs.forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('active', s.id === 'tab-' + name));
+}
+tabs.forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+const drop = $('#drop'), fileInput = $('#file'), go = $('#go');
+let picked = null;
+function setFile(f) {
+  picked = f;
+  $('#filename').textContent = f ? `${f.name}  (${fmtBytes(f.size)})` : '';
+  go.disabled = !f;
+}
+fileInput.addEventListener('change', () => setFile(fileInput.files[0] || null));
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) setFile(f); });
+
+go.addEventListener('click', () => {
+  if (!picked) return;
+  const fd = new FormData();
+  fd.append('video', picked);
+  fd.append('fast', $('#fast').checked ? '1' : '0');
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/jobs');
+  go.disabled = true;
+  xhr.upload.onprogress = e => { if (e.lengthComputable) $('#upload-status').textContent = `Uploading ${Math.round(e.loaded / e.total * 100)}%`; };
+  xhr.onload = () => {
+    $('#upload-status').textContent = '';
+    if (xhr.status === 201) { setFile(null); fileInput.value = ''; refresh(); showTab('processing'); }
+    else { $('#upload-status').textContent = 'Upload failed: ' + (JSON.parse(xhr.responseText || '{}').error || xhr.status); go.disabled = false; }
+  };
+  xhr.onerror = () => { $('#upload-status').textContent = 'Upload failed.'; go.disabled = false; };
+  xhr.send(fd);
+});
+
+function fmtBytes(n) { if (n == null) return ''; const u = ['B','KB','MB','GB']; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + ' ' + u[i]; }
+function fmtTime(s) { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function stageText(j) {
+  if (j.status === 'queued') return 'Waiting in queue';
+  if (j.stage === 'preparing') return 'Building the mosaic reference frame';
+  if (j.stage === 'encoding') {
+    let t = `Encoding slots: ${Math.round(j.progress * 100)}%`;
+    if (j.started && j.progress > 0.02) { const el = Date.now() / 1000 - j.started; t += ` · about ${fmtTime(el / j.progress - el)} left`; }
+    return t;
+  }
+  return j.stage;
+}
+
+function card(j) {
+  const s = j.summary || {};
+  let body = `<div class="top"><div class="name" title="${esc(j.name)}">${esc(j.name)}</div><div class="meta">${fmtBytes(j.input_bytes)}${j.fast ? ' · fast' : ''}</div></div>`;
+  if (j.status === 'done') {
+    body += `<dl>
+      <dt>Output</dt><dd>${esc(j.output_name)} · ${fmtBytes(s.output_bytes)}</dd>
+      <dt>Stream</dt><dd>${s.width}x${s.height}, 399 fps VP9, ${s.slots} slots (${fmtTime(s.output_duration)})</dd>
+      <dt>Source frames</dt><dd>${s.source_frames} at 30 fps, each shown for one slot</dd>
+      <dt>Mosaic</dt><dd>${s.block_px} px blocks from the frame at ${Number(s.mosaic_ref_time).toFixed(2)} s</dd>
+      <dt>Took</dt><dd>${fmtTime((j.finished || 0) - (j.started || 0))}</dd>
+    </dl>
+    <div class="actions"><a class="dl" href="/api/jobs/${j.id}/download">Download</a><button class="rm" data-id="${j.id}">Remove</button></div>`;
+  } else if (j.status === 'error') {
+    body += `<div class="err">${esc(j.error || 'Unknown error')}</div><div class="actions"><button class="rm" data-id="${j.id}">Remove</button></div>`;
+  } else {
+    body += `<div class="bar"><div style="width:${Math.round(j.progress * 100)}%"></div></div><div class="meta">${stageText(j)}</div>`;
+  }
+  return `<div class="card">${body}</div>`;
+}
+
+async function refresh() {
+  let list;
+  try { list = await (await fetch('/api/jobs')).json(); } catch (e) { return; }
+  const active = list.filter(j => j.status === 'queued' || j.status === 'processing');
+  const done = list.filter(j => j.status === 'done' || j.status === 'error');
+  $('#processing-list').innerHTML = active.length ? active.map(card).join('') : '<div class="empty">Nothing is processing.</div>';
+  $('#finished-list').innerHTML = done.length ? done.map(card).join('') : '<div class="empty">No finished videos yet.</div>';
+  $('#badge-processing').textContent = active.length;
+  $('#badge-finished').textContent = done.filter(j => j.status === 'done').length;
+  document.querySelectorAll('button.rm').forEach(b => b.addEventListener('click', async () => {
+    await fetch('/api/jobs/' + b.dataset.id, { method: 'DELETE' }); refresh();
+  }));
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
