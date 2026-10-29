@@ -100,6 +100,11 @@
   .acct { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; }
   .acct .role { color:var(--muted); font-size:12px; }
   .acct .role b { color:var(--text); font-weight:500; }
+  .acct .role b.revoked { color:var(--accent); }
+  .acct .btns { display:flex; gap:10px; flex-wrap:wrap; }
+  .confirm { margin-top:12px; border-top:1px solid var(--line); padding-top:12px; display:grid; gap:10px; width:100%; }
+  .confirm p { margin:0; font-size:13px; }
+  .confirm .meta { font-size:12px; }
   .setting { display:grid; gap:8px; }
   .setting label { font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); }
   .setting .ctl { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
@@ -156,7 +161,7 @@
   <section id="tab-processing"><div id="processing-list"></div></section>
   <section id="tab-finished"><div id="finished-list"></div></section>
   {% if is_admin %}
-  <section id="tab-approval"><div id="approval-list"></div><h2 class="sub">Accounts</h2><p class="note">Media buyers see the Upload, Processing and Finished tabs with only their own jobs. Users get the upload dashboard.</p><div id="accounts-list"></div></section>
+  <section id="tab-approval"><div id="approval-list"></div><h2 class="sub">Accounts</h2><p class="note">Media buyers see the Upload, Processing and Finished tabs with only their own jobs. Users get the upload dashboard. Revoking an account stops it signing in and blocks new registrations from the addresses it used; Reinstate undoes both.</p><div id="accounts-list"></div></section>
   <section id="tab-gallery"><div id="gallery-folders" class="folders"></div><div id="gallery-folder" hidden></div></section>
   <section id="tab-settings"><div class="settings">
     <div class="setting">
@@ -334,10 +339,16 @@ function approvalCard(r) {
   </div>`;
 }
 const ROLE_LABEL = { user: 'user', media_buyer: 'media buyer' };
+let confirmRevoke = null;   // email whose revoke confirmation is open
 function accountCard(a) {
   const other = a.role === 'media_buyer' ? 'user' : 'media_buyer';
-  return `<div class="card acct"><div><div class="name" title="${esc(a.email)}">${esc(a.email)}</div><div class="role">Role: <b>${ROLE_LABEL[a.role] || esc(a.role)}</b>${a.portfolio_id ? ' · ' + esc(a.portfolio_id) : ''}</div></div>
-    <button class="rm" data-account="${esc(a.email)}" data-role="${other}">Make ${ROLE_LABEL[other]}</button></div>`;
+  const revoked = a.status === 'revoked';
+  const head = `<div><div class="name" title="${esc(a.email)}">${esc(a.email)}</div><div class="role">Role: <b>${ROLE_LABEL[a.role] || esc(a.role)}</b>${a.portfolio_id ? ' · ' + esc(a.portfolio_id) : ''}${revoked ? ` · <b class="revoked">access revoked</b> ${esc(fmtDate(a.revoked))}` : ''}</div></div>`;
+  const btns = revoked
+    ? `<div class="btns"><button class="ok" data-account="${esc(a.email)}" data-action="restore">Reinstate access</button></div>`
+    : `<div class="btns"><button class="rm" data-account="${esc(a.email)}" data-role="${other}">Make ${ROLE_LABEL[other]}</button><button class="no" data-account="${esc(a.email)}" data-action="ask-revoke">Revoke access</button></div>`;
+  const ask = confirmRevoke === a.email ? `<div class="confirm"><p>Are you sure you want to revoke access for <b>${esc(a.email)}</b>?</p><p class="meta">They will not be able to sign in, any open session ends on its next request, ${a.ips.length ? `and new registrations from the ${a.ips.length} address${a.ips.length === 1 ? '' : 'es'} this account was seen from will be refused.` : 'and no network block applies yet because no address is on record for this account (addresses are recorded at each sign-in).'} Their finished videos stay in the Gallery. You can reinstate access later.</p><div class="btns"><button class="no" data-account="${esc(a.email)}" data-action="revoke">Yes, revoke</button><button class="rm" data-action="cancel-revoke">Cancel</button></div></div>` : '';
+  return `<div class="card acct">${head}${btns}${ask}</div>`;
 }
 
 function renderGallery(folders) {
@@ -389,7 +400,16 @@ document.addEventListener('click', async (e) => {
   if (rm) { rm.disabled = true; await fetch('/api/jobs/' + rm.dataset.id, { method: 'DELETE' }); refresh(); return; }
   const dec = e.target.closest('#approval-list button[data-decision]');
   if (dec) { dec.disabled = true; await fetch('/api/registrations/' + encodeURIComponent(dec.dataset.email) + '/' + dec.dataset.decision, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: dec.dataset.role || 'user' }) }); refresh(); return; }
-  const sw = e.target.closest('#accounts-list button[data-account]');
+  const act = e.target.closest('#accounts-list button[data-action]');
+  if (act) {
+    const a = act.dataset.action, email = act.dataset.account;
+    if (a === 'ask-revoke') { confirmRevoke = email; refresh(); return; }
+    if (a === 'cancel-revoke') { confirmRevoke = null; refresh(); return; }
+    act.disabled = true;
+    await fetch('/api/accounts/' + encodeURIComponent(email) + '/' + a, { method: 'POST' });
+    confirmRevoke = null; refresh(); return;
+  }
+  const sw = e.target.closest('#accounts-list button[data-role]');
   if (sw) { sw.disabled = true; await fetch('/api/accounts/' + encodeURIComponent(sw.dataset.account) + '/role', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: sw.dataset.role }) }); refresh(); return; }
   const folder = e.target.closest('#gallery-folders .folder');
   if (folder) { openFolder = folder.dataset.email; refresh(); return; }

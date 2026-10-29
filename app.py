@@ -188,12 +188,15 @@ def login():
         if user is None:
             time.sleep(0.5)  # blunt password guessing a little
             error = "That email and password don't match."
+        elif user["status"] == "revoked":
+            error = "Your access has been revoked."
         elif user["status"] != "active":
             error = "Your registration is still waiting for approval."
         else:
             session.clear()
             session["email"] = user["email"]
             session.permanent = True
+            auth.record_ip(user["email"], request.remote_addr)
             return redirect(_safe_next(request.args.get("next")))
     status = 401 if error else 200
     return render_template("login.html", error=error, email=email, next=request.args.get("next") or ""), status
@@ -209,7 +212,7 @@ def register():
         form = {"email": (request.form.get("email") or "").strip(),
                 "portfolio_id": (request.form.get("portfolio_id") or "").strip()}
         try:
-            auth.register(form["email"], request.form.get("password") or "", form["portfolio_id"])
+            auth.register(form["email"], request.form.get("password") or "", form["portfolio_id"], request.remote_addr)
         except ValueError as exc:
             error = str(exc)
         else:
@@ -261,9 +264,27 @@ def decide_registration(email, decision):
 
 @app.get("/api/accounts")
 def list_accounts():
-    """Active non-admin accounts, for the Approval tab's role switcher."""
+    """Active and revoked non-admin accounts, for the Approval tab's Accounts section."""
     _admin_only()
-    return jsonify([a for a in auth.accounts() if a["status"] == "active" and a["role"] != "admin"])
+    return jsonify([a for a in auth.accounts() if a["status"] in ("active", "revoked") and a["role"] != "admin"])
+
+
+@app.post("/api/accounts/<path:email>/revoke")
+def revoke_account(email):
+    _admin_only()
+    try:
+        return jsonify(auth.revoke(email))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/accounts/<path:email>/restore")
+def restore_account(email):
+    _admin_only()
+    try:
+        return jsonify(auth.restore(email))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.post("/api/accounts/<path:email>/role")

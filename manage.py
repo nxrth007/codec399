@@ -4,6 +4,8 @@
     python manage.py set-password EMAIL [--password-stdin]
     python manage.py remove-user EMAIL
     python manage.py set-role EMAIL user|media_buyer
+    python manage.py revoke EMAIL
+    python manage.py restore EMAIL
     python manage.py approve EMAIL [--role user|media_buyer]
     python manage.py decline EMAIL
     python manage.py list-users
@@ -49,6 +51,8 @@ def main(argv=None):
     sr.add_argument("email")
     sr.add_argument("role", choices=("user", "media_buyer"))
     sub.add_parser("decline", help="remove a pending registration").add_argument("email")
+    sub.add_parser("revoke", help="shut an account out and block its addresses from registering").add_argument("email")
+    sub.add_parser("restore", help="undo a revoke").add_argument("email")
     sub.add_parser("list-users", help="show every account with its role and status")
     args = p.parse_args(argv)
 
@@ -68,6 +72,12 @@ def main(argv=None):
         elif args.cmd == "set-role":
             auth.set_role(args.email, args.role)
             print(f"{args.email.strip().lower()} is now a {auth.ROLE_LABELS[args.role]}")
+        elif args.cmd == "revoke":
+            auth.revoke(args.email)
+            print(f"Revoked {args.email.strip().lower()}")
+        elif args.cmd == "restore":
+            auth.restore(args.email)
+            print(f"Restored {args.email.strip().lower()}")
         elif args.cmd == "decline":
             auth.decline(args.email)
             print(f"Declined and removed {args.email.strip().lower()}")

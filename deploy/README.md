@@ -82,7 +82,10 @@ People can also register themselves from the sign-in page with an email, a passw
 Business Portfolio ID. That creates a `pending` account that cannot sign in until an admin accepts
 it on the Approval tab of the encoder screen as a user or a media buyer (or with
 `manage.py approve EMAIL [--role media_buyer]`); declining removes the request. The same tab
-switches existing non-admin accounts between the two roles (`manage.py set-role`).
+switches existing non-admin accounts between the two roles (`manage.py set-role`), and can revoke an
+account: it can no longer sign in, open sessions end, and the addresses it was seen from (kept in
+`blocked_ips.json`) are refused at registration until the account is restored (`manage.py revoke`
+and `restore`). Addresses are read from nginx's forwarded header, so keep `CODEC399_BEHIND_PROXY=1`.
 
 ## Updating
 

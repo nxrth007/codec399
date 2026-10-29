@@ -70,7 +70,8 @@ different port.
    videos per batch. All three limits can be changed on the admin screen's Settings tab.
    Jobs started from the admin screen keep whatever was ticked and have no cap.
    A `media_buyer` account gets these three tabs too but sees, downloads and removes only its own
-   jobs. New users register from the
+   jobs. Admins can revoke an account from the Approval tab, which also blocks registrations from the
+   addresses it used, and restore it later. New users register from the
    sign-in page and wait in the admin's **Approval** tab until accepted.
 2. **Processing** tab: progress bar with a time estimate. Two jobs run at a time by default (a
    Settings-tab value) and admin jobs start first; the rest queue.
