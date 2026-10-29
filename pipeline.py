@@ -295,15 +295,15 @@ def process(src, dst, on_progress=None, fast=False, cancel=None, encode_audio=Fa
     mosaic = build_mosaic(_grab_frame(src, w, h, ref_index), w, h)
 
     audio_src = src
-    cloaked_wav = None
-    cloak_audio = bool(info["has_audio"] and encode_audio)
-    if cloak_audio:
+    encoded_wav = None
+    audio_encoded = bool(info["has_audio"] and encode_audio)
+    if audio_encoded:
         if cancel is not None and cancel.is_set():
             raise PipelineError("Cancelled.")
         report("audio")
-        cloaked_wav = dst + ".audio.wav"
-        audioencode.process(src, cloaked_wav, FFMPEG, FFPROBE)
-        audio_src = cloaked_wav
+        encoded_wav = dst + ".audio.wav"
+        audioencode.process(src, encoded_wav, FFMPEG, FFPROBE)
+        audio_src = encoded_wav
 
     head = [FFMPEG, "-v", "error", "-nostats", "-nostdin", "-y",
             "-f", "rawvideo", "-pix_fmt", "yuv420p", "-video_size", f"{w}x{h}",
@@ -329,7 +329,7 @@ def process(src, dst, on_progress=None, fast=False, cancel=None, encode_audio=Fa
     try:
         frames_used = _stream_slots(src, w, h, mosaic, n_slots, cmd, state, "pass2", lambda s: report(), cancel)
     finally:
-        for fn in (passlog + "-0.log", passlog + "-0.log.mbtree", passlog, cloaked_wav):
+        for fn in (passlog + "-0.log", passlog + "-0.log.mbtree", passlog, encoded_wav):
             if fn is None:
                 continue
             try:
@@ -345,7 +345,7 @@ def process(src, dst, on_progress=None, fast=False, cancel=None, encode_audio=Fa
         "output_duration": n_slots / SLOT_FPS, "mosaic_ref_frame": ref_index, "mosaic_ref_time": ref_index / SRC_FPS,
         "block_px": block_size(w), "has_audio": info["has_audio"], "output_bytes": os.path.getsize(dst),
         "source_codec": info["codec"], "source_fps": info["src_fps"], "fast": fast,
-        "encode_audio": cloak_audio,
+        "encode_audio": audio_encoded,
     }
 
 

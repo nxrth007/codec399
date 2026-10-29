@@ -20,8 +20,8 @@ class AudioEncodeError(RuntimeError):
     pass
 
 
-def cloak(audio, sr):
-    """Return the cloaked copy of a mono float waveform `audio` sampled at `sr` Hz."""
+def encode(audio, sr):
+    """Return the encoded copy of a mono float waveform `audio` sampled at `sr` Hz."""
     audio = np.asarray(audio, dtype=np.float64)
     n_steps = len(audio)
     if n_steps < 2:
@@ -105,13 +105,13 @@ def write_wav(wave, sr, dst, ffmpeg="ffmpeg"):
 
 
 def process(src, dst, ffmpeg="ffmpeg", ffprobe="ffprobe"):
-    """Cloak the soundtrack of `src` and write it as a mono WAV to `dst`.  Returns a summary dict."""
+    """Encode the soundtrack of `src` and write it as a mono WAV to `dst`.  Returns a summary dict."""
     sr = sample_rate(src, ffprobe)
     audio = decode_mono(src, sr, ffmpeg)
     if len(audio) == 0:
         raise AudioEncodeError("The audio stream is empty.")
-    cloaked = normalize(cloak(audio, sr))
-    write_wav(cloaked, sr, dst, ffmpeg)
+    encoded = normalize(encode(audio, sr))
+    write_wav(encoded, sr, dst, ffmpeg)
     return {"sample_rate": sr, "samples": int(len(audio)), "output_bytes": os.path.getsize(dst)}
 
 

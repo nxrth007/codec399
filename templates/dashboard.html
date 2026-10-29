@@ -108,7 +108,7 @@
 <div class="modal" id="ask" hidden role="dialog" aria-modal="true" aria-labelledby="ask-title">
   <div class="box">
     <h2 id="ask-title">Do you want to encode Audio?</h2>
-    <p id="ask-note">Yes cloaks the soundtrack. The video is processed either way.</p>
+    <p id="ask-note">Yes encodes the soundtrack. The video is processed either way.</p>
     <div class="choices"><button type="button" id="ask-yes">Yes</button><button type="button" id="ask-no" class="no">No</button></div>
   </div>
 </div>
@@ -175,7 +175,7 @@ function closeAsk() { ask.hidden = true; go.focus(); }
 go.addEventListener('click', () => {
   const ready = picked.filter(p => !p.tooLong);
   if (busy || !ready.length) return;
-  $('#ask-note').textContent = (ready.length > 1 ? `Applies to all ${ready.length} videos. ` : '') + 'Yes cloaks the soundtrack. The video is processed either way.';
+  $('#ask-note').textContent = (ready.length > 1 ? `Applies to all ${ready.length} videos. ` : '') + 'Yes encodes the soundtrack. The video is processed either way.';
   ask.hidden = false; $('#ask-yes').focus();
 });
 $('#ask-yes').addEventListener('click', () => start(true));
