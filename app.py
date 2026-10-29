@@ -14,6 +14,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
 import auth
+import meta_library
 import pipeline
 import settings
 import whop
@@ -56,7 +57,8 @@ def _mmss(seconds):
 
 def _public(job):
     keys = ("id", "name", "status", "stage", "progress", "created", "started", "finished",
-            "error", "summary", "fast", "fast_auto", "encode_audio", "input_bytes", "output_name", "owner", "credits_left")
+            "error", "summary", "fast", "fast_auto", "encode_audio", "input_bytes", "output_name", "owner", "credits_left",
+            "meta")
     return {k: job.get(k) for k in keys}
 
 
@@ -94,6 +96,9 @@ def _load_existing():
         status = job.get("status")
         if status == "done" and os.path.isfile(os.path.join(JOBS_DIR, jid, "output.mp4")):
             jobs[jid] = job
+            if (job.get("meta") or {}).get("status") in ("queued", "retrying"):
+                job["meta"] = None          # the upload was cut off by the restart: start it again
+                _meta_sync(job)
         elif status in ("queued", "processing"):
             src = os.path.join(JOBS_DIR, jid, "input" + (job.get("ext") or ".mp4"))
             if not os.path.isfile(src):
@@ -135,12 +140,41 @@ def _run(job):
         with lock:
             job.update(status="error", stage="error", error=str(exc), finished=time.time())
     _save_meta(job)
+    if job["status"] == "done":
+        _meta_sync(job)
     for fn in (src, dst if job["status"] != "done" else None):
         if fn:
             try:
                 os.remove(fn)
             except OSError:
                 pass
+
+
+def _meta_sync(job):
+    """Mirror a finished video into its owner's Meta Media Library folder (see meta_library).  Only
+    videos from accounts with a Business Portfolio ID go up; the job's "meta" record tracks it."""
+    if meta_library.configured() or not job.get("owner"):
+        return False
+    state = (job.get("meta") or {}).get("status")
+    if state in ("uploaded", "queued", "retrying"):
+        return False
+    account = auth.account(job["owner"])
+    if account is None or not account.get("portfolio_id"):
+        return False
+    path = os.path.join(JOBS_DIR, job["id"], "output.mp4")
+    if not os.path.isfile(path):
+        return False
+    with lock:
+        job["meta"] = {"status": "queued", "at": time.time()}
+    _save_meta(job)
+
+    def on_result(status, info):
+        with lock:
+            job["meta"] = dict(info, status=status, at=time.time())
+        _save_meta(job)
+
+    meta_library.sync_in_background(job["id"], job["owner"], path, job["output_name"].replace("399", "ghost"), on_result)
+    return True
 
 
 def _enqueue(job):
@@ -176,7 +210,7 @@ def _dispatcher():
         threading.Thread(target=_run_and_release, args=(job,), daemon=True).start()
 
 
-PUBLIC_ENDPOINTS = {"login", "register", "static", "whop_webhook", "bot_account", "start"}
+PUBLIC_ENDPOINTS = {"login", "register", "static", "whop_webhook", "bot_account", "start", "meta_sync"}
 # Shared secret the Discord bot sends as a Bearer token to look accounts up before selling credits.
 BOT_TOKEN = os.environ.get("CODEC399_BOT_TOKEN", "")
 DISCORD_INVITE = "https://discord.gg/peEY87MCu"
@@ -310,6 +344,7 @@ def decide_registration(email, decision):
     try:
         if decision == "approve":
             auth.approve(email, body.get("role") or "user")
+            meta_library.prepare_in_background(email)
         elif decision == "decline":
             auth.decline(email)
         else:
@@ -317,6 +352,30 @@ def decide_registration(email, decision):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 404
     return jsonify({"email": email.strip().lower(), "decision": decision})
+
+
+@app.post("/api/meta/sync")
+def meta_sync():
+    """Push everything to Meta that is not there yet: a folder for every active account with a
+    Business Portfolio ID (and a fresh look at pending shares), then every finished video that has
+    not been uploaded or failed last time.  Admins from the Gallery, or manage.py with the bot token."""
+    token = request.headers.get("Authorization", "")
+    if not (BOT_TOKEN and hmac.compare_digest(token, "Bearer " + BOT_TOKEN)):
+        # Public to the login gate so the bot token can be checked here; everyone else must be an admin.
+        user = auth.get_user(session.get("email")) if session.get("email") else None
+        if user is None or user["role"] != "admin":
+            abort(401 if user is None else 403)
+    missing = meta_library.configured()
+    if missing:
+        return jsonify({"error": "Meta is not configured: set " + ", ".join(missing)}), 503
+    folders = [a["email"] for a in auth.accounts()
+               if a["status"] == "active" and a["role"] != "admin" and a.get("portfolio_id")]
+    for email in folders:
+        meta_library.prepare_in_background(email)
+    with lock:
+        done = [j for j in jobs.values() if j["status"] == "done" and (j.get("meta") or {}).get("status") != "uploaded"]
+    queued = sum(1 for j in done if _meta_sync(j))
+    return jsonify({"folders": len(folders), "videos_queued": queued, "waiting": meta_library.pending()})
 
 
 @app.get("/api/accounts")
@@ -450,7 +509,7 @@ def gallery():
     for acct in auth.accounts():
         if acct["status"] == "active" and acct["role"] in ("user", "media_buyer"):
             folders[acct["email"]] = {"email": acct["email"], "portfolio_id": acct["portfolio_id"],
-                                      "role": "user", "videos": [], "in_progress": 0}
+                                      "role": "user", "videos": [], "in_progress": 0, "meta": acct.get("meta") or {}}
     known = {a["email"]: a for a in auth.accounts()}
     with lock:
         snapshot = [_public(j) for j in jobs.values()]
@@ -459,7 +518,8 @@ def gallery():
         if owner not in folders:
             acct = known.get(owner)
             folders[owner] = {"email": owner, "portfolio_id": acct["portfolio_id"] if acct else None,
-                              "role": acct["role"] if acct else None, "videos": [], "in_progress": 0}
+                              "role": acct["role"] if acct else None, "videos": [], "in_progress": 0,
+                              "meta": (acct.get("meta") if acct else None) or {}}
         if j["status"] == "done":
             folders[owner]["videos"].append(j)
         elif j["status"] in ("queued", "processing"):

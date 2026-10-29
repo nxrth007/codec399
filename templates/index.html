@@ -90,6 +90,11 @@
   .folder .pid { color:var(--muted); font-size:12px; letter-spacing:.04em; overflow-wrap:anywhere; }
   .folder .count { color:var(--muted); font-size:12px; margin-top:12px; }
   .folder .count em { color:var(--accent); font-style:normal; }
+  .folder .sync { color:var(--muted); font-size:12px; margin-top:6px; }
+  .folder .sync.ok { color:var(--accent); }
+  .gallery-bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  .gallery-bar .msg { color:var(--muted); font-size:12px; }
+  .crumb .meta-link { margin-left:auto; font-size:12px; color:var(--muted); }
   .crumb { display:flex; align-items:baseline; gap:16px; margin-bottom:18px; flex-wrap:wrap; }
   .crumb button { background:none; border:0; color:var(--muted); font:inherit; cursor:pointer; padding:0; letter-spacing:.06em; }
   .crumb button:hover { color:var(--text); }
@@ -168,7 +173,7 @@
   <section id="tab-finished"><div id="finished-list"></div></section>
   {% if is_admin %}
   <section id="tab-approval"><div id="approval-list"></div><h2 class="sub">Accounts</h2><p class="note">Media buyers see the Upload, Processing and Finished tabs with only their own jobs. Users get the upload dashboard. Revoking an account stops it signing in and blocks new registrations from the addresses it used; Reinstate undoes both.</p><div id="accounts-list"></div></section>
-  <section id="tab-gallery"><div id="gallery-folders" class="folders"></div><div id="gallery-folder" hidden></div></section>
+  <section id="tab-gallery"><div class="gallery-bar"><button type="button" class="rm" id="meta-sync">Sync to Meta</button><span class="msg" id="meta-msg">Finished videos are copied to each client's folder in the Meta Media Library automatically; Sync pushes anything that is missing.</span></div><div id="gallery-folders" class="folders"></div><div id="gallery-folder" hidden></div></section>
   <section id="tab-settings"><div class="settings">
     <div class="setting">
       <label for="set-max">Longest video a user may upload</label>
@@ -295,6 +300,7 @@ function card(j) {
       <dt>Mosaic</dt><dd>${s.block_px} px blocks from the frame at ${Number(s.mosaic_ref_time).toFixed(2)} s</dd>
       ${s.has_audio ? `<dt>Audio</dt><dd>${s.encode_audio ? 'Encode Audio applied, then AAC' : 'Original soundtrack, AAC'}</dd>` : ''}
       <dt>Took</dt><dd>${fmtTime((j.finished || 0) - (j.started || 0))}</dd>
+      ${metaVideoText(j.meta) ? `<dt>Meta</dt><dd>${metaVideoText(j.meta)}</dd>` : ''}
     </dl>
     <div class="actions"><a class="dl" href="/api/jobs/${j.id}/download">Download</a><button class="rm" data-id="${j.id}">Remove</button></div>`;
   } else if (j.status === 'error') {
@@ -323,16 +329,30 @@ function showLimits(v) {
   }
 }
 async function loadLimits() { try { const r = await fetch('/api/settings'); if (r.ok) showLimits(await r.json()); } catch (e) {} }
+function metaFolderText(m) {
+  if (!m || !m.folder_id) return '';
+  if (m.share_status === 'shared') return '<div class="sync ok">Meta folder shared</div>';
+  if (m.share_status === 'pending') return '<div class="sync">Meta folder: waiting for them to accept</div>';
+  if (m.share_status === 'error') return `<div class="sync" title="${esc(m.share_error || '')}">Meta folder: sharing failed</div>`;
+  return '<div class="sync">Meta folder created</div>';
+}
+function metaVideoText(m) {
+  if (!m || !m.status) return '';
+  if (m.status === 'uploaded') return 'In their Meta Media Library folder';
+  if (m.status === 'error') return `Meta upload failed: ${esc(m.error || '')}`;
+  if (m.status === 'retrying') return `Uploading to Meta (retrying: ${esc(m.error || '')})`;
+  return 'Uploading to Meta…';
+}
 function folderTile(f) {
   const n = f.videos.length;
   const label = f.email || 'Unassigned';
   const pid = f.portfolio_id ? esc(f.portfolio_id) : (f.role === 'admin' ? 'admin' : (f.email ? 'no Business Portfolio ID' : 'uploads from before accounts'));
   const prog = f.in_progress ? ` · <em>${f.in_progress} in progress</em>` : '';
-  return `<button class="folder" data-email="${esc(f.email)}" aria-label="Open folder ${esc(label)}"><div class="email">${esc(label)}</div><div class="pid">${pid}</div><div class="count">${n} video${n === 1 ? '' : 's'}${prog}</div></button>`;
+  return `<button class="folder" data-email="${esc(f.email)}" aria-label="Open folder ${esc(label)}"><div class="email">${esc(label)}</div><div class="pid">${pid}</div><div class="count">${n} video${n === 1 ? '' : 's'}${prog}</div>${metaFolderText(f.meta)}</button>`;
 }
 function folderView(f) {
   const label = f.email || 'Unassigned';
-  const head = `<div class="crumb"><button type="button" id="gallery-back">&larr; Gallery</button><span class="title">${esc(label)}</span>${f.portfolio_id ? `<span class="pid">${esc(f.portfolio_id)}</span>` : ''}</div>`;
+  const head = `<div class="crumb"><button type="button" id="gallery-back">&larr; Gallery</button><span class="title">${esc(label)}</span>${f.portfolio_id ? `<span class="pid">${esc(f.portfolio_id)}</span>` : ''}${f.meta && f.meta.folder_url ? `<a class="meta-link" href="${esc(f.meta.folder_url)}" target="_blank" rel="noopener">Open in Meta Media Library</a>` : ''}</div>`;
   const body = f.videos.length ? f.videos.map(card).join('') : `<div class="empty">No finished videos in this folder yet${f.in_progress ? `, ${f.in_progress} in progress` : ''}.</div>`;
   return head + body;
 }
@@ -427,6 +447,14 @@ document.addEventListener('click', async (e) => {
   const folder = e.target.closest('#gallery-folders .folder');
   if (folder) { openFolder = folder.dataset.email; refresh(); return; }
   if (e.target.closest('#gallery-back')) { openFolder = null; refresh(); return; }
+  if (e.target.closest('#meta-sync')) {
+    const btn = $('#meta-sync'), msg = $('#meta-msg'); btn.disabled = true; msg.textContent = 'Syncing…';
+    try {
+      const r = await fetch('/api/meta/sync', { method: 'POST' }); const d = await r.json();
+      msg.textContent = r.ok ? `Folders checked for ${d.folders} account${d.folders === 1 ? '' : 's'}; ${d.videos_queued} video${d.videos_queued === 1 ? '' : 's'} queued for upload.` : (d.error || 'Sync failed.');
+    } catch (err) { msg.textContent = 'Sync failed.'; }
+    btn.disabled = false; refresh(); return;
+  }
   const set = e.target.closest('button[data-set]');
   if (set) {
     const input = $('#' + set.dataset.input), msg = $('#msg-' + set.dataset.input.replace('set-', ''));

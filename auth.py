@@ -82,6 +82,7 @@ def _public(email, user):
         "gold_manual": bool(user.get("gold")),
         "gold_until": user.get("gold_until"),
         "purchases": list(user.get("purchases") or []),
+        "meta": dict(user.get("meta") or {}),
     }
 
 
@@ -265,6 +266,28 @@ def register(email, password, portfolio_id, ip=None):
         users[email] = {"hash": generate_password_hash(password), "role": "user", "status": "pending",
                         "portfolio_id": portfolio_id, "created": time.time(), "ips": [ip] if ip else []}
         _save_users(users)
+
+
+def account(email):
+    """One account, whatever its status, or None."""
+    email = _normalise(email)
+    user = load_users().get(email)
+    return None if user is None else _public(email, user)
+
+
+def set_meta(email, **fields):
+    """Merge fields into the account's Meta Media Library record (folder id, share status, ...)."""
+    email = _normalise(email)
+    with _lock:
+        users = load_users()
+        user = users.get(email)
+        if user is None:
+            raise ValueError(f"No account for {email}.")
+        meta = dict(user.get("meta") or {})
+        meta.update(fields)
+        user["meta"] = meta
+        _save_users(users)
+        return meta
 
 
 def accounts():
