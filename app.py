@@ -176,10 +176,12 @@ def _dispatcher():
         threading.Thread(target=_run_and_release, args=(job,), daemon=True).start()
 
 
-PUBLIC_ENDPOINTS = {"login", "register", "static", "whop_webhook", "bot_account"}
+PUBLIC_ENDPOINTS = {"login", "register", "static", "whop_webhook", "bot_account", "start"}
 # Shared secret the Discord bot sends as a Bearer token to look accounts up before selling credits.
 BOT_TOKEN = os.environ.get("CODEC399_BOT_TOKEN", "")
 DISCORD_INVITE = "https://discord.gg/peEY87MCu"
+# The site's public address, for canonical links and the pages that name it.
+PUBLIC_URL = (os.environ.get("CODEC399_PUBLIC_URL") or "https://ghostrus.xyz").rstrip("/")
 
 
 @app.before_request
@@ -246,6 +248,12 @@ def login():
             return redirect(_safe_next(request.args.get("next")))
     status = 401 if error else 200
     return render_template("login.html", error=error, email=email, next=request.args.get("next") or ""), status
+
+
+@app.get("/start")
+def start():
+    """The public landing page: the Ghost title screen with one Start button that leads to the Discord."""
+    return render_template("start.html", discord=DISCORD_INVITE, canonical=PUBLIC_URL + "/start", site=PUBLIC_URL)
 
 
 @app.route("/register", methods=["GET", "POST"])
