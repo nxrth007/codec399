@@ -28,8 +28,9 @@ class StartPage(unittest.TestCase):
         self.assertIn(">Start</a>", html)
         # The Meta Pixel: the loader, the init with the pixel id, and the noscript fallback.
         self.assertIn("connect.facebook.net/en_US/fbevents.js", html)
-        self.assertIn("fbq('init', '4413644252232262')", html)
-        self.assertIn("facebook.com/tr?id=4413644252232262&ev=PageView&noscript=1", html)
+        self.assertIn("fbq('init', '1626220608533770')", html)
+        self.assertIn("facebook.com/tr?id=1626220608533770&ev=PageView&noscript=1", html)
+        self.assertNotIn("4413644252232262", html)
         self.assertIn("fbq('track', 'Lead'", html)
 
     def test_other_pages_still_need_sign_in(self):
