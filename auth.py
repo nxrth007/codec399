@@ -28,6 +28,7 @@ ROLE_LABELS = {"admin": "admin", "media_buyer": "media buyer", "user": "user"}
 STATUSES = ("active", "pending", "revoked")
 BLOCKED_IPS_FILE = os.path.join(os.path.dirname(USERS_FILE) or ".", "blocked_ips.json")
 MAX_IPS = 10
+GOLD_PERIOD = 31 * 24 * 3600   # a monthly Gold payment covers this long; each renewal extends it
 
 _lock = threading.Lock()
 
@@ -76,7 +77,117 @@ def _public(email, user):
         "created": user.get("created"),
         "revoked": user.get("revoked"),
         "ips": list(user.get("ips") or []),
+        "credits": int(user.get("credits") or 0),
+        "gold": is_gold(user),
+        "gold_manual": bool(user.get("gold")),
+        "gold_until": user.get("gold_until"),
+        "purchases": list(user.get("purchases") or []),
     }
+
+
+def is_gold(user):
+    """Gold is either switched on by an admin (no expiry) or paid monthly (gold_until in the future)."""
+    if user.get("gold"):
+        return True
+    until = user.get("gold_until")
+    return bool(until) and float(until) > time.time()
+
+
+def entitlement(email):
+    """(gold, credits) for an account; admins are treated as unlimited."""
+    user = load_users().get(_normalise(email)) or {}
+    if user.get("role") == "admin":
+        return True, 0
+    return is_gold(user), int(user.get("credits") or 0)
+
+
+def add_credits(email, n, note=""):
+    """Add (or with a negative n, remove) upload credits.  Returns the new balance."""
+    email = _normalise(email)
+    n = int(n)
+    with _lock:
+        users = load_users()
+        user = users.get(email)
+        if user is None:
+            raise ValueError(f"{email} does not exist.")
+        user["credits"] = max(0, int(user.get("credits") or 0) + n)
+        user.setdefault("purchases", []).append({"at": time.time(), "ads": n, "note": note})
+        user["purchases"] = user["purchases"][-50:]
+        _save_users(users)
+        return user["credits"]
+
+
+def set_gold(email, on, note=""):
+    email = _normalise(email)
+    with _lock:
+        users = load_users()
+        user = users.get(email)
+        if user is None:
+            raise ValueError(f"{email} does not exist.")
+        user["gold"] = bool(on)
+        user.setdefault("purchases", []).append({"at": time.time(), "gold": bool(on), "note": note})
+        user["purchases"] = user["purchases"][-50:]
+        _save_users(users)
+        return _public(email, user)
+
+
+def consume_credit(email):
+    """Spend one upload credit; returns the remaining balance.  Gold and admins spend nothing."""
+    email = _normalise(email)
+    with _lock:
+        users = load_users()
+        user = users.get(email)
+        if user is None:
+            raise ValueError(f"{email} does not exist.")
+        if user.get("role") == "admin" or is_gold(user):
+            return None
+        credits = int(user.get("credits") or 0)
+        if credits <= 0:
+            raise ValueError("No uploads left.")
+        user["credits"] = credits - 1
+        _save_users(users)
+        return user["credits"]
+
+
+def apply_purchase(email, ads=0, gold=False, note=""):
+    """A paid Whop order: approve the account if it is still pending, then credit it."""
+    email = _normalise(email)
+    with _lock:
+        users = load_users()
+        user = users.get(email)
+        if user is None:
+            raise ValueError(f"Paid, but no account is registered as {email}; credit it by hand once they register.")
+        if user.get("status") == "pending":
+            user["status"] = "active"
+            user["approved"] = time.time()
+        if user.get("status") == "revoked":
+            raise ValueError(f"Paid, but {email} is revoked; reinstate the account to credit it.")
+        if gold:
+            # Monthly Gold: a payment covers one period from now, or from the current expiry if
+            # it renews early, so consecutive renewals chain without a gap.
+            base = max(time.time(), float(user.get("gold_until") or 0))
+            user["gold_until"] = base + GOLD_PERIOD
+        if ads:
+            user["credits"] = int(user.get("credits") or 0) + int(ads)
+        user.setdefault("purchases", []).append({"at": time.time(), "ads": int(ads), "gold": bool(gold), "note": note})
+        user["purchases"] = user["purchases"][-50:]
+        _save_users(users)
+        return {"status": user["status"], "credits": int(user.get("credits") or 0), "gold": is_gold(user), "gold_until": user.get("gold_until")}
+
+
+def end_gold(email, note=""):
+    """A Gold subscription ended on Whop: drop the paid expiry (an admin-set Gold flag is untouched)."""
+    email = _normalise(email)
+    with _lock:
+        users = load_users()
+        user = users.get(email)
+        if user is None:
+            raise ValueError(f"{email} does not exist.")
+        user["gold_until"] = 0
+        user.setdefault("purchases", []).append({"at": time.time(), "gold_ended": True, "note": note})
+        user["purchases"] = user["purchases"][-50:]
+        _save_users(users)
+        return _public(email, user)
 
 
 def _load_blocked():

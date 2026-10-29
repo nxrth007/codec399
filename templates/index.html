@@ -101,7 +101,12 @@
   .acct .role { color:var(--muted); font-size:12px; }
   .acct .role b { color:var(--text); font-weight:500; }
   .acct .role b.revoked { color:var(--accent); }
-  .acct .btns { display:flex; gap:10px; flex-wrap:wrap; }
+  .acct .btns { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .acct input.n { width:70px; background:var(--panel); color:var(--text); border:0; border-bottom:1px solid var(--faint); padding:8px 4px; font:inherit; outline:none; border-radius:0; }
+  .acct .bal b.gold { color:#f0c674; }
+  .balance { color:var(--muted); font-size:13px; margin:-6px 0 14px; }
+  .balance b { color:var(--text); font-weight:500; }
+  .balance b.gold { color:#f0c674; }
   .confirm { margin-top:12px; border-top:1px solid var(--line); padding-top:12px; display:grid; gap:10px; width:100%; }
   .confirm p { margin:0; font-size:13px; }
   .confirm .meta { font-size:12px; }
@@ -142,6 +147,7 @@
   </nav>
 
   <section id="tab-upload" class="active">
+    {% if not is_admin %}<div class="balance">{% if gold %}<b class="gold">Gold</b> · unlimited uploads{% else %}Uploads left: <b id="balance-left">{{ credits }}</b> · <a href="{{ discord }}" target="_blank" rel="noopener" style="color:var(--text)">buy more in the Discord</a>{% endif %}</div>{% endif %}
     <div class="drop" id="drop">
       <input type="file" id="file" accept="video/mp4,video/quicktime,video/*" multiple>
       <label for="file" class="pick">Choose videos</label>
@@ -233,8 +239,8 @@ function uploadOne(file, index, total) {
     xhr.open('POST', '/api/jobs');
     xhr.upload.onprogress = e => { if (e.lengthComputable) $('#upload-status').textContent = `Uploading ${label} ${Math.round(e.loaded / e.total * 100)}%`; };
     xhr.onload = () => {
-      if (xhr.status === 201) resolve(null);
-      else { let msg = String(xhr.status); try { msg = JSON.parse(xhr.responseText).error || msg; } catch (e) {} resolve(`${file.name}: ${msg}`); }
+      if (xhr.status === 201) { try { const j = JSON.parse(xhr.responseText); const el = $('#balance-left'); if (el && j.credits_left != null) el.textContent = j.credits_left; } catch (e) {} resolve(null); }
+      else { let msg = String(xhr.status); try { msg = JSON.parse(xhr.responseText).error || msg; } catch (e) {} if (xhr.status === 402) { const el = $('#balance-left'); if (el) el.textContent = '0'; } resolve(`${file.name}: ${msg}`); }
     };
     xhr.onerror = () => resolve(`${file.name}: upload failed`);
     xhr.send(fd);
@@ -343,10 +349,11 @@ let confirmRevoke = null;   // email whose revoke confirmation is open
 function accountCard(a) {
   const other = a.role === 'media_buyer' ? 'user' : 'media_buyer';
   const revoked = a.status === 'revoked';
-  const head = `<div><div class="name" title="${esc(a.email)}">${esc(a.email)}</div><div class="role">Role: <b>${ROLE_LABEL[a.role] || esc(a.role)}</b>${a.portfolio_id ? ' · ' + esc(a.portfolio_id) : ''}${revoked ? ` · <b class="revoked">access revoked</b> ${esc(fmtDate(a.revoked))}` : ''}</div></div>`;
+  const bal = a.gold ? `<b class="gold">Gold</b> · unlimited${a.gold_manual ? '' : ' until ' + esc(fmtDate(a.gold_until))}` : `uploads left: <b>${a.credits}</b>`;
+  const head = `<div><div class="name" title="${esc(a.email)}">${esc(a.email)}</div><div class="role">Role: <b>${ROLE_LABEL[a.role] || esc(a.role)}</b>${a.portfolio_id ? ' · ' + esc(a.portfolio_id) : ''} · <span class="bal">${bal}</span>${revoked ? ` · <b class="revoked">access revoked</b> ${esc(fmtDate(a.revoked))}` : ''}</div></div>`;
   const btns = revoked
     ? `<div class="btns"><button class="ok" data-account="${esc(a.email)}" data-action="restore">Reinstate access</button></div>`
-    : `<div class="btns"><button class="rm" data-account="${esc(a.email)}" data-role="${other}">Make ${ROLE_LABEL[other]}</button><button class="no" data-account="${esc(a.email)}" data-action="ask-revoke">Revoke access</button></div>`;
+    : `<div class="btns"><input class="n" type="number" step="1" placeholder="+ uploads" aria-label="Uploads to add" data-credits-for="${esc(a.email)}"><button class="rm" data-account="${esc(a.email)}" data-action="credits">Add</button><button class="rm" data-account="${esc(a.email)}" data-action="gold" data-gold="${a.gold_manual ? 'false' : 'true'}">${a.gold_manual ? 'Gold off' : 'Gold on'}</button><button class="rm" data-account="${esc(a.email)}" data-role="${other}">Make ${ROLE_LABEL[other]}</button><button class="no" data-account="${esc(a.email)}" data-action="ask-revoke">Revoke access</button></div>`;
   const ask = confirmRevoke === a.email ? `<div class="confirm"><p>Are you sure you want to revoke access for <b>${esc(a.email)}</b>?</p><p class="meta">They will not be able to sign in, any open session ends on its next request, ${a.ips.length ? `and new registrations from the ${a.ips.length} address${a.ips.length === 1 ? '' : 'es'} this account was seen from will be refused.` : 'and no network block applies yet because no address is on record for this account (addresses are recorded at each sign-in).'} Their finished videos stay in the Gallery. You can reinstate access later.</p><div class="btns"><button class="no" data-account="${esc(a.email)}" data-action="revoke">Yes, revoke</button><button class="rm" data-action="cancel-revoke">Cancel</button></div></div>` : '';
   return `<div class="card acct">${head}${btns}${ask}</div>`;
 }
@@ -396,7 +403,7 @@ async function refresh() {
 
 // One delegated handler: lists are re-rendered only when they change, so per-element listeners would pile up.
 document.addEventListener('click', async (e) => {
-  const rm = e.target.closest('button.rm');
+  const rm = e.target.closest('button.rm[data-id]');
   if (rm) { rm.disabled = true; await fetch('/api/jobs/' + rm.dataset.id, { method: 'DELETE' }); refresh(); return; }
   const dec = e.target.closest('#approval-list button[data-decision]');
   if (dec) { dec.disabled = true; await fetch('/api/registrations/' + encodeURIComponent(dec.dataset.email) + '/' + dec.dataset.decision, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: dec.dataset.role || 'user' }) }); refresh(); return; }
@@ -405,6 +412,12 @@ document.addEventListener('click', async (e) => {
     const a = act.dataset.action, email = act.dataset.account;
     if (a === 'ask-revoke') { confirmRevoke = email; refresh(); return; }
     if (a === 'cancel-revoke') { confirmRevoke = null; refresh(); return; }
+    if (a === 'credits') {
+      const input = document.querySelector(`input[data-credits-for="${CSS.escape(email)}"]`); const n = parseInt(input.value, 10);
+      if (!n) { input.focus(); return; }
+      act.disabled = true; await fetch('/api/accounts/' + encodeURIComponent(email) + '/credits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ add: n }) }); refresh(); return;
+    }
+    if (a === 'gold') { act.disabled = true; await fetch('/api/accounts/' + encodeURIComponent(email) + '/gold', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gold: act.dataset.gold === 'true' }) }); refresh(); return; }
     act.disabled = true;
     await fetch('/api/accounts/' + encodeURIComponent(email) + '/' + a, { method: 'POST' });
     confirmRevoke = null; refresh(); return;

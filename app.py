@@ -15,6 +15,7 @@ from werkzeug.utils import secure_filename
 import auth
 import pipeline
 import settings
+import whop
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 JOBS_DIR = os.environ.get("CODEC399_JOBS_DIR") or os.path.join(BASE, "jobs")
@@ -54,7 +55,7 @@ def _mmss(seconds):
 
 def _public(job):
     keys = ("id", "name", "status", "stage", "progress", "created", "started", "finished",
-            "error", "summary", "fast", "fast_auto", "encode_audio", "input_bytes", "output_name", "owner")
+            "error", "summary", "fast", "fast_auto", "encode_audio", "input_bytes", "output_name", "owner", "credits_left")
     return {k: job.get(k) for k in keys}
 
 
@@ -140,7 +141,8 @@ def _dispatcher():
         threading.Thread(target=_run_and_release, args=(job,), daemon=True).start()
 
 
-PUBLIC_ENDPOINTS = {"login", "register", "static"}
+PUBLIC_ENDPOINTS = {"login", "register", "static", "whop_webhook"}
+DISCORD_INVITE = "https://discord.gg/peEY87MCu"
 
 
 @app.before_request
@@ -230,14 +232,17 @@ def logout():
 def index():
     if g.user["role"] not in ("admin", "media_buyer"):
         return redirect(url_for("dashboard"))
-    return render_template("index.html", user=g.user, is_admin=g.user["role"] == "admin", max_batch=ADMIN_MAX_BATCH)
+    gold, credits = auth.entitlement(g.user["email"])
+    return render_template("index.html", user=g.user, is_admin=g.user["role"] == "admin", max_batch=ADMIN_MAX_BATCH,
+                           gold=gold, credits=credits, discord=DISCORD_INVITE)
 
 
 @app.get("/dashboard")
 def dashboard():
     limits = settings.load()
+    gold, credits = auth.entitlement(g.user["email"])
     return render_template("dashboard.html", user=g.user, max_seconds=int(round(limits["user_max_seconds"])),
-                           max_batch=int(limits["user_max_batch"]))
+                           max_batch=int(limits["user_max_batch"]), gold=gold, credits=credits, discord=DISCORD_INVITE)
 
 
 @app.get("/api/registrations")
@@ -267,6 +272,47 @@ def list_accounts():
     """Active and revoked non-admin accounts, for the Approval tab's Accounts section."""
     _admin_only()
     return jsonify([a for a in auth.accounts() if a["status"] in ("active", "revoked") and a["role"] != "admin"])
+
+
+@app.get("/api/me")
+def me():
+    gold, credits = auth.entitlement(g.user["email"])
+    return jsonify({"email": g.user["email"], "role": g.user["role"], "gold": gold, "credits": credits})
+
+
+@app.post("/api/accounts/<path:email>/credits")
+def account_credits(email):
+    """Body: {"add": 5} adds five upload credits; negative removes."""
+    _admin_only()
+    body = request.get_json(silent=True) or {}
+    try:
+        n = int(body.get("add"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Enter a whole number of uploads."}), 400
+    if n == 0 or abs(n) > 10000:
+        return jsonify({"error": "Enter a whole number between -10000 and 10000, not 0."}), 400
+    try:
+        return jsonify({"email": email.strip().lower(), "credits": auth.add_credits(email, n, note=f"admin {g.user['email']}")})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/accounts/<path:email>/gold")
+def account_gold(email):
+    """Body: {"gold": true|false}."""
+    _admin_only()
+    body = request.get_json(silent=True) or {}
+    try:
+        return jsonify(auth.set_gold(email, bool(body.get("gold")), note=f"admin {g.user['email']}"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/whop/webhook")
+def whop_webhook():
+    """Whop calls this on payment.succeeded; see whop.py.  Public, authenticated by signature."""
+    status, message = whop.handle(request.get_data(), {k.lower(): v for k, v in request.headers.items()})
+    return jsonify({"message": message}), status
 
 
 @app.post("/api/accounts/<path:email>/revoke")
@@ -403,6 +449,13 @@ def create_job():
         "output_name": os.path.splitext(name)[0] + "_codec399.mp4",
         "cancel": threading.Event(),
     }
+    if g.user["role"] != "admin":
+        try:
+            left = auth.consume_credit(g.user["email"])
+        except ValueError:
+            shutil.rmtree(jdir, ignore_errors=True)
+            return jsonify({"error": "You have no uploads left. Open a ticket in the Discord to buy more.", "credits": 0}), 402
+        job["credits_left"] = left
     with lock:
         jobs[jid] = job
     _enqueue(job)

@@ -26,6 +26,7 @@ The app itself reads these environment variables:
 | `CODEC399_AUTO_FAST_SECONDS` | User uploads longer than this use Fast encode automatically, default 210 (3:30) |
 | `CODEC399_USER_MAX_SECONDS` | User uploads longer than this are refused, default 360 (6:00); admins have no cap |
 | `CODEC399_USER_MAX_BATCH` | Videos a user may upload per batch, default 8 |
+| `CODEC399_WHOP_WEBHOOK_SECRET` | Secret of the Whop webhook that posts to `/api/whop/webhook`; unset, the endpoint answers 503 |
 
 The last four are starting values: admins change them on the Settings tab of the encoder screen,
 and the saved values in `/var/lib/codec399/settings.json` win over the environment.
@@ -86,6 +87,18 @@ switches existing non-admin accounts between the two roles (`manage.py set-role`
 account: it can no longer sign in, open sessions end, and the addresses it was seen from (kept in
 `blocked_ips.json`) are refused at registration until the account is restored (`manage.py revoke`
 and `restore`). Addresses are read from nginx's forwarded header, so keep `CODEC399_BEHIND_PROXY=1`.
+
+## Payments and upload credits
+
+Every non-admin account has a balance of upload credits (one per uploaded video) or Gold
+(unlimited). A paid Whop order credits the account: the Discord bot creates a Whop checkout with
+metadata `{"email": <registered email>, "ads": N}` or `{"email": ..., "gold": true}`, Whop
+sends `payment.succeeded` to `https://<domain>/api/whop/webhook`, and `whop.py` verifies the
+signature, approves the account if it is still pending, and adds the credits. Gold is monthly: each
+Gold payment extends `gold_until` by 31 days, and a membership event that says the subscription
+ended drops it; an admin's Gold toggle has no expiry. Deliveries are
+logged to `/var/lib/codec399/whop_events.log`; duplicates are ignored by webhook id. Admins can
+also add credits or toggle Gold on the Approval tab (or `manage.py credits` / `manage.py gold`).
 
 ## Updating
 

@@ -6,6 +6,8 @@
     python manage.py set-role EMAIL user|media_buyer
     python manage.py revoke EMAIL
     python manage.py restore EMAIL
+    python manage.py credits EMAIL N          # add N upload credits (negative removes)
+    python manage.py gold EMAIL on|off
     python manage.py approve EMAIL [--role user|media_buyer]
     python manage.py decline EMAIL
     python manage.py list-users
@@ -53,6 +55,12 @@ def main(argv=None):
     sub.add_parser("decline", help="remove a pending registration").add_argument("email")
     sub.add_parser("revoke", help="shut an account out and block its addresses from registering").add_argument("email")
     sub.add_parser("restore", help="undo a revoke").add_argument("email")
+    cr = sub.add_parser("credits", help="add upload credits (negative removes)")
+    cr.add_argument("email")
+    cr.add_argument("n", type=int)
+    gd = sub.add_parser("gold", help="turn unlimited uploads on or off")
+    gd.add_argument("email")
+    gd.add_argument("state", choices=("on", "off"))
     sub.add_parser("list-users", help="show every account with its role and status")
     args = p.parse_args(argv)
 
@@ -78,6 +86,11 @@ def main(argv=None):
         elif args.cmd == "restore":
             auth.restore(args.email)
             print(f"Restored {args.email.strip().lower()}")
+        elif args.cmd == "credits":
+            print(f"{args.email.strip().lower()} now has {auth.add_credits(args.email, args.n, note='manage.py')} uploads left")
+        elif args.cmd == "gold":
+            auth.set_gold(args.email, args.state == "on", note="manage.py")
+            print(f"Gold {args.state} for {args.email.strip().lower()}")
         elif args.cmd == "decline":
             auth.decline(args.email)
             print(f"Declined and removed {args.email.strip().lower()}")
@@ -88,6 +101,8 @@ def main(argv=None):
             for email, u in sorted(users.items()):
                 created = time.strftime("%Y-%m-%d", time.gmtime(u.get("created", 0)))
                 extra = f"  portfolio {u['portfolio_id']}" if u.get("portfolio_id") else ""
+                if u.get("role") != "admin":
+                    extra += "  GOLD" if u.get("gold") else f"  credits {int(u.get('credits') or 0)}"
                 print(f"{u.get('role', 'user'):11} {u.get('status', 'active'):8} {email}  (created {created}){extra}")
     except ValueError as exc:
         sys.exit(str(exc))
