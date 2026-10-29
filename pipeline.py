@@ -50,7 +50,7 @@ import threading
 
 import numpy as np
 
-import audiocloak
+import audioencode
 import mp4patch
 
 SLOT_FPS = 399
@@ -274,7 +274,7 @@ def process(src, dst, on_progress=None, fast=False, cancel=None, encode_audio=Fa
     """Encode `src` to `dst`.  on_progress(state) receives a dict with keys
     stage, pass1, pass2, est_slots, frames_in, progress.  `cancel` is an optional
     threading.Event; setting it aborts the encode with PipelineError("Cancelled.").
-    `encode_audio` runs the soundtrack through audiocloak before it is muxed; the
+    `encode_audio` runs the soundtrack through audioencode before it is muxed; the
     video is unaffected.  Returns a summary dict."""
     info = probe(src)
     w, h = info["width"], info["height"]
@@ -302,7 +302,7 @@ def process(src, dst, on_progress=None, fast=False, cancel=None, encode_audio=Fa
             raise PipelineError("Cancelled.")
         report("audio")
         cloaked_wav = dst + ".audio.wav"
-        audiocloak.process(src, cloaked_wav, FFMPEG, FFPROBE)
+        audioencode.process(src, cloaked_wav, FFMPEG, FFPROBE)
         audio_src = cloaked_wav
 
     head = [FFMPEG, "-v", "error", "-nostats", "-nostdin", "-y",

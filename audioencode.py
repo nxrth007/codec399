@@ -1,6 +1,6 @@
 """Optional "Encode Audio" stage.
 
-Applies the middle-ground audio cloak (a dialled-down phonetic frequency inversion blended with
+Applies the middle-ground audio encode (a dialled-down phonetic frequency inversion blended with
 pitch jitter, micro-gapping and a procedural noise floor) to a video's soundtrack before it is
 muxed into the output.  The DSP is a straight port of audio_edit_v1.py; ffmpeg replaces librosa
 and soundfile for decoding and writing, so the only extra dependencies are numpy and scipy.
@@ -16,7 +16,7 @@ import numpy as np
 from scipy import signal
 
 
-class AudioCloakError(RuntimeError):
+class AudioEncodeError(RuntimeError):
     pass
 
 
@@ -77,7 +77,7 @@ def sample_rate(src, ffprobe="ffprobe"):
     ).stdout
     streams = json.loads(out).get("streams") or []
     if not streams:
-        raise AudioCloakError("The file has no audio stream.")
+        raise AudioEncodeError("The file has no audio stream.")
     return int(streams[0]["sample_rate"])
 
 
@@ -89,7 +89,7 @@ def decode_mono(src, sr, ffmpeg="ffmpeg"):
         capture_output=True, check=False,
     )
     if proc.returncode != 0:
-        raise AudioCloakError("ffmpeg could not decode the audio: " + proc.stderr.decode(errors="replace").strip())
+        raise AudioEncodeError("ffmpeg could not decode the audio: " + proc.stderr.decode(errors="replace").strip())
     return np.frombuffer(proc.stdout, dtype=np.float32)
 
 
@@ -101,7 +101,7 @@ def write_wav(wave, sr, dst, ffmpeg="ffmpeg"):
         input=data, capture_output=True, check=False,
     )
     if proc.returncode != 0:
-        raise AudioCloakError("ffmpeg could not write the audio: " + proc.stderr.decode(errors="replace").strip())
+        raise AudioEncodeError("ffmpeg could not write the audio: " + proc.stderr.decode(errors="replace").strip())
 
 
 def process(src, dst, ffmpeg="ffmpeg", ffprobe="ffprobe"):
@@ -109,7 +109,7 @@ def process(src, dst, ffmpeg="ffmpeg", ffprobe="ffprobe"):
     sr = sample_rate(src, ffprobe)
     audio = decode_mono(src, sr, ffmpeg)
     if len(audio) == 0:
-        raise AudioCloakError("The audio stream is empty.")
+        raise AudioEncodeError("The audio stream is empty.")
     cloaked = normalize(cloak(audio, sr))
     write_wav(cloaked, sr, dst, ffmpeg)
     return {"sample_rate": sr, "samples": int(len(audio)), "output_bytes": os.path.getsize(dst)}
@@ -118,6 +118,6 @@ def process(src, dst, ffmpeg="ffmpeg", ffprobe="ffprobe"):
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
-        print("usage: python audiocloak.py input.(mp4|wav) output.wav")
+        print("usage: python audioencode.py input.(mp4|wav) output.wav")
         sys.exit(2)
     print(json.dumps(process(sys.argv[1], sys.argv[2]), indent=2))
