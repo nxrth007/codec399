@@ -210,9 +210,11 @@ def _dispatcher():
         threading.Thread(target=_run_and_release, args=(job,), daemon=True).start()
 
 
-PUBLIC_ENDPOINTS = {"login", "register", "static", "whop_webhook", "bot_account", "start", "meta_sync"}
+PUBLIC_ENDPOINTS = {"login", "register", "static", "whop_webhook", "bot_account", "start", "meta_sync",
+                    "export_queue", "export_accounts", "export_file", "export_mark", "export_account_mark"}
 # Shared secret the Discord bot sends as a Bearer token to look accounts up before selling credits.
 BOT_TOKEN = os.environ.get("CODEC399_BOT_TOKEN", "")
+EXPORT_TOKEN = os.environ.get("CODEC399_EXPORT_TOKEN", "")   # for an outside agent that mirrors videos elsewhere
 DISCORD_INVITE = "https://discord.gg/peEY87MCu"
 # The site's public address, for canonical links and the pages that name it.
 PUBLIC_URL = (os.environ.get("CODEC399_PUBLIC_URL") or "https://ghostrus.xyz").rstrip("/")
@@ -235,6 +237,18 @@ def _require_login():
 def _admin_only():
     if g.user["role"] != "admin":
         abort(403)
+
+
+def _agent_or_admin(token_value):
+    """For endpoints an outside agent may call: its bearer token, or an admin's session.  These
+    endpoints are public to the login gate, so the check happens here.  Returns who it was."""
+    token = request.headers.get("Authorization", "")
+    if token_value and hmac.compare_digest(token, "Bearer " + token_value):
+        return "agent"
+    user = auth.get_user(session.get("email")) if session.get("email") else None
+    if user is None or user["role"] != "admin":
+        abort(401 if user is None else 403)
+    return user["email"]
 
 
 def _staff_only():
@@ -359,12 +373,7 @@ def meta_sync():
     """Push everything to Meta that is not there yet: a folder for every active account with a
     Business Portfolio ID (and a fresh look at pending shares), then every finished video that has
     not been uploaded or failed last time.  Admins from the Gallery, or manage.py with the bot token."""
-    token = request.headers.get("Authorization", "")
-    if not (BOT_TOKEN and hmac.compare_digest(token, "Bearer " + BOT_TOKEN)):
-        # Public to the login gate so the bot token can be checked here; everyone else must be an admin.
-        user = auth.get_user(session.get("email")) if session.get("email") else None
-        if user is None or user["role"] != "admin":
-            abort(401 if user is None else 403)
+    _agent_or_admin(BOT_TOKEN)
     missing = meta_library.configured()
     if missing:
         return jsonify({"error": "Meta is not configured: set " + ", ".join(missing)}), 503
@@ -376,6 +385,132 @@ def meta_sync():
         done = [j for j in jobs.values() if j["status"] == "done" and (j.get("meta") or {}).get("status") != "uploaded"]
     queued = sum(1 for j in done if _meta_sync(j))
     return jsonify({"folders": len(folders), "videos_queued": queued, "waiting": meta_library.pending()})
+
+
+# ---------------------------------------------------------------- hand-off to an outside agent
+#
+# An agent that puts finished videos somewhere else (a browser agent working in Meta's Media
+# Library, say) reads the queue, fetches each file, and reports what it did; the Gallery shows the
+# same states as the built-in Meta sync.  Authenticated with CODEC399_EXPORT_TOKEN or an admin session.
+
+def _export_account(acct):
+    meta = acct.get("meta") or {}
+    return {"email": acct["email"], "portfolio_id": acct.get("portfolio_id"), "folder": acct["email"],
+            "folder_url": meta.get("folder_url"), "share_status": meta.get("share_status") or "none",
+            "share_error": meta.get("share_error")}
+
+
+def _export_item(job, acct):
+    meta = job.get("meta") or {}
+    return {"job_id": job["id"], "email": job["owner"], "portfolio_id": acct.get("portfolio_id"), "folder": acct["email"],
+            "folder_url": (acct.get("meta") or {}).get("folder_url"),
+            "share_status": (acct.get("meta") or {}).get("share_status") or "none",
+            "filename": job["output_name"].replace("399", "ghost"), "bytes": (job.get("summary") or {}).get("output_bytes"),
+            "finished": job.get("finished"), "status": meta.get("status") or "pending", "error": meta.get("error"),
+            "by": meta.get("by"), "file": f"/api/export/{job['id']}/file"}
+
+
+def _exportable():
+    """Finished videos of active accounts with a Business Portfolio ID, with their account."""
+    known = {a["email"]: a for a in auth.accounts()}
+    with lock:
+        snapshot = list(jobs.values())
+    out = []
+    for job in snapshot:
+        acct = known.get(job.get("owner") or "")
+        if job["status"] != "done" or acct is None or acct["status"] != "active" or not acct.get("portfolio_id"):
+            continue
+        if not os.path.isfile(os.path.join(JOBS_DIR, job["id"], "output.mp4")):
+            continue
+        out.append((job, acct))
+    return out
+
+
+@app.get("/api/export/queue")
+def export_queue():
+    """Videos still to be put in their owner's folder, oldest first.  `?all=1` includes the done ones."""
+    _agent_or_admin(EXPORT_TOKEN)
+    everything = request.args.get("all") in ("1", "true")
+    items = [_export_item(j, a) for j, a in _exportable()
+             if everything or (j.get("meta") or {}).get("status") != "uploaded"]
+    items.sort(key=lambda i: i["finished"] or 0)
+    return jsonify({"count": len(items), "items": items})
+
+
+@app.get("/api/export/accounts")
+def export_accounts():
+    """Every client the agent may need a folder for, with what is known about that folder."""
+    _agent_or_admin(EXPORT_TOKEN)
+    rows = [_export_account(a) for a in auth.accounts()
+            if a["status"] == "active" and a["role"] != "admin" and a.get("portfolio_id")]
+    pending = {}
+    for job, acct in _exportable():
+        if (job.get("meta") or {}).get("status") != "uploaded":
+            pending[acct["email"]] = pending.get(acct["email"], 0) + 1
+    for row in rows:
+        row["videos_pending"] = pending.get(row["email"], 0)
+    return jsonify(rows)
+
+
+@app.get("/api/export/<jid>/file")
+def export_file(jid):
+    _agent_or_admin(EXPORT_TOKEN)
+    with lock:
+        job = jobs.get(jid)
+    if job is None or job["status"] != "done":
+        abort(404)
+    path = os.path.join(JOBS_DIR, jid, "output.mp4")
+    if not os.path.isfile(path):
+        abort(404)
+    return send_file(path, as_attachment=True, download_name=job["output_name"].replace("399", "ghost"), mimetype="video/mp4")
+
+
+@app.post("/api/export/<jid>")
+def export_mark(jid):
+    """Record what happened to a video: {"status": "uploaded"|"error"|"pending", "video_id"?, "error"?, "by"?}."""
+    who = _agent_or_admin(EXPORT_TOKEN)
+    body = request.get_json(silent=True) or {}
+    status = body.get("status")
+    if status not in ("uploaded", "error", "pending"):
+        return jsonify({"error": "status must be uploaded, error or pending"}), 400
+    with lock:
+        job = jobs.get(jid)
+        if job is None or job["status"] != "done":
+            abort(404)
+        if status == "pending":
+            job["meta"] = None
+        else:
+            job["meta"] = {"status": status, "at": time.time(), "by": str(body.get("by") or who)[:40],
+                           "video_id": str(body["video_id"])[:80] if body.get("video_id") else None,
+                           "error": str(body["error"])[:300] if body.get("error") else None}
+    _save_meta(job)
+    return jsonify({"job_id": jid, "meta": job["meta"]})
+
+
+@app.post("/api/export/accounts/<email>")
+def export_account_mark(email):
+    """Record the client's folder: {"folder_url"?, "folder_id"?, "share_status"?: shared|pending|error|none, "share_error"?}."""
+    _agent_or_admin(EXPORT_TOKEN)
+    body = request.get_json(silent=True) or {}
+    fields = {}
+    if "folder_url" in body:
+        fields["folder_url"] = str(body["folder_url"] or "")[:500] or None
+    if "folder_id" in body:
+        fields["folder_id"] = str(body["folder_id"] or "")[:80] or None
+    if "share_status" in body:
+        if body["share_status"] not in ("shared", "pending", "error", "none"):
+            return jsonify({"error": "share_status must be shared, pending, error or none"}), 400
+        fields["share_status"] = None if body["share_status"] == "none" else body["share_status"]
+        fields["share_error"] = str(body.get("share_error") or "")[:300] or None
+        if body["share_status"] == "shared":
+            fields["shared_at"] = time.time()
+    if not fields:
+        return jsonify({"error": "nothing to record"}), 400
+    try:
+        meta = auth.set_meta(email, **fields)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({"email": email.strip().lower(), "meta": meta})
 
 
 @app.get("/api/accounts")
