@@ -92,7 +92,9 @@ def ads_variant_body(ads):
 
 
 def gold_variant_body():
-    """A hidden renewal variant: GOLD_PRICE now and every GOLD_DAYS days."""
+    """A hidden renewal variant: GOLD_PRICE every GOLD_DAYS days, starting today.  On a renewal plan
+    Whop charges `initial_price` as a one-off setup fee on top of the first renewal, so it stays 0;
+    the first month is the renewal price itself."""
     return {
         "account_id": COMPANY_ID,
         "product_id": PRODUCT_ID,
@@ -101,7 +103,7 @@ def gold_variant_body():
         "billing_period": GOLD_DAYS,
         "release_method": "buy_now",
         "visibility": "hidden",
-        "initial_price": GOLD_PRICE,
+        "initial_price": 0,
         "renewal_price": GOLD_PRICE,
         "title": "Gold: unlimited uploads",
         "internal_notes": f"codec399 bot: Gold ${GOLD_PRICE:g} every {GOLD_DAYS} days",
@@ -169,7 +171,8 @@ def _matches(variant, key, ads=None):
     """A variant made by this client, still hidden-or-visible (not archived) and at today's price."""
     meta = variant.get("metadata") or {}
     if key == "gold":
-        return bool(meta.get("codec399_gold")) and float(variant.get("renewal_price") or 0) == GOLD_PRICE
+        return (bool(meta.get("codec399_gold")) and float(variant.get("renewal_price") or 0) == GOLD_PRICE
+                and not float(variant.get("initial_price") or 0))
     return meta.get("codec399_ads") == ads and float(variant.get("initial_price") or 0) == round(ads * PRICE_PER_AD, 2)
 
 
@@ -192,7 +195,8 @@ def variant_for(key, ads=None):
     """Return the variant id for `ads` uploads (key "ads") or for Gold (key "gold"), creating it once."""
     if key == "gold" and GOLD_PLAN_ID:
         return GOLD_PLAN_ID
-    cache_key = "gold" if key == "gold" else f"ads:{int(ads)}"
+    # "gold2": the first Gold variants carried a setup fee equal to the renewal price; never reuse those.
+    cache_key = "gold2" if key == "gold" else f"ads:{int(ads)}"
     price = GOLD_PRICE if key == "gold" else round(int(ads) * PRICE_PER_AD, 2)
     with _lock:
         cache = _load_cache()

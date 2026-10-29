@@ -47,9 +47,14 @@ class CheckoutBodies(unittest.TestCase):
         body = whop_api.gold_variant_body()
         self.assertEqual(body["billing_type"], "renewal")
         self.assertEqual(body["billing_period"], 30)
-        self.assertEqual(body["initial_price"], 1500.0)
+        self.assertEqual(body["initial_price"], 0)
         self.assertEqual(body["renewal_price"], 1500.0)
         self.assertEqual(body["metadata"], {"codec399_gold": True})
+
+    def test_gold_matcher_rejects_setup_fee(self):
+        meta = {"codec399_gold": True}
+        self.assertFalse(whop_api._matches({"metadata": meta, "renewal_price": 1500.0, "initial_price": 1500.0}, "gold"))
+        self.assertTrue(whop_api._matches({"metadata": meta, "renewal_price": 1500.0, "initial_price": 0.0}, "gold"))
 
     def test_checkout_body(self):
         body = whop_api.checkout_body("plan_x", "Buyer@Example.com", ads=4, discord_id=42)
