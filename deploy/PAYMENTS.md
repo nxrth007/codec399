@@ -120,6 +120,7 @@ What the bot offers once running:
 | Where | What |
 |---|---|
 | Every new ticket | the pricing panel with **Buy ad uploads** and **Gold** buttons |
+| `#pricing` (standing copy) | the same panel, posted once; a read-only channel needs an override giving the bot's role **Send Messages** and **Embed Links** |
 | `/buy email ads` | a checkout link for N ads, visible only to the person |
 | `/gold email` | a checkout link for Gold |
 | `/balance email` | uploads left / Gold, and the account status |
