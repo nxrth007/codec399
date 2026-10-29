@@ -177,6 +177,13 @@ def _mine(job):
     return g.user["role"] == "admin" or job.get("owner") == g.user["email"]
 
 
+def _download_name(name):
+    """The file name a finished job downloads as: the upload's name with a suffix, and every "399"
+    (including the one in the suffix) spelled "ghost"."""
+    base = os.path.splitext(name)[0] + "_codec399"
+    return base.replace("399", "ghost") + ".mp4"
+
+
 def _safe_next(target):
     return target if target and target.startswith("/") and not target.startswith("//") else "/"
 
@@ -466,7 +473,7 @@ def create_job():
         "encode_audio": request.form.get("encode_audio") in ("1", "true", "on"),
         "input_bytes": os.path.getsize(path),
         "owner": g.user["email"], "owner_role": g.user["role"],
-        "output_name": os.path.splitext(name)[0] + "_codec399.mp4",
+        "output_name": _download_name(name),
         "cancel": threading.Event(),
     }
     if g.user["role"] != "admin":
@@ -490,7 +497,9 @@ def download(jid):
     if job is None or job["status"] != "done" or not _mine(job):
         abort(404)
     path = os.path.join(JOBS_DIR, jid, "output.mp4")
-    return send_file(path, as_attachment=True, download_name=job["output_name"], mimetype="video/mp4")
+    # Jobs finished before the rename keep their stored name; apply the spelling on the way out too.
+    return send_file(path, as_attachment=True, download_name=job["output_name"].replace("399", "ghost"),
+                     mimetype="video/mp4")
 
 
 @app.delete("/api/jobs/<jid>")

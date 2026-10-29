@@ -1,4 +1,4 @@
-"""codec399 Discord bot: pricing in every ticket, Whop checkout links, and balance lookups.
+"""Ghost Marketing Discord bot (codec399): pricing in every ticket, Whop checkout links, and balance lookups.
 
 What it does
     * When the ticket bot opens a new ticket channel (a channel created under the ticket category,
@@ -57,7 +57,7 @@ def dollars(n):
 
 
 def register_url():
-    return f"{PUBLIC_URL}/register" if PUBLIC_URL else "the codec399 sign-in page"
+    return f"{PUBLIC_URL}/register" if PUBLIC_URL else "the Ghost Marketing sign-in page"
 
 
 # ---------------------------------------------------------------- codec399 account lookup
@@ -103,7 +103,7 @@ def balance_line(account):
 
 def pricing_embed():
     e = discord.Embed(
-        title="codec399 pricing",
+        title="Ghost Marketing Pricing",
         description=(
             f"**{dollars(PRICE_PER_AD)} per ad** (one upload each). Pick how many you need.\n"
             f"**{dollars(GOLD_PRICE)} / month for Gold**: unlimited uploads.\n\n"
@@ -156,7 +156,7 @@ async def deliver_checkout(interaction, email, ads=None, gold=False):
         account = await asyncio.to_thread(lookup_account, email)
     except RuntimeError as exc:
         log.warning("account lookup failed: %s", exc)
-        await interaction.followup.send("❌ I could not check that email with codec399 right now. "
+        await interaction.followup.send("❌ I could not check that email with Ghost Marketing right now. "
                                         "Please try again in a minute or ask a staff member.", ephemeral=True)
         return
     problem = account_problem(account)
@@ -261,25 +261,25 @@ bot = Bot()
 
 
 @bot.tree.command(name="buy", description="Get a Whop checkout link for ad uploads")
-@app_commands.describe(email="The email you registered with on codec399", ads=f"How many ads ({dollars(PRICE_PER_AD)} each)")
+@app_commands.describe(email="The email you registered with on Ghost Marketing", ads=f"How many ads ({dollars(PRICE_PER_AD)} each)")
 async def buy(interaction: discord.Interaction, email: str, ads: app_commands.Range[int, 1, whop_api.MAX_ADS]):
     await deliver_checkout(interaction, email, ads=ads)
 
 
 @bot.tree.command(name="gold", description=f"Get a Whop checkout link for Gold: unlimited uploads, {dollars(GOLD_PRICE)}/month")
-@app_commands.describe(email="The email you registered with on codec399")
+@app_commands.describe(email="The email you registered with on Ghost Marketing")
 async def gold(interaction: discord.Interaction, email: str):
     await deliver_checkout(interaction, email, gold=True)
 
 
 @bot.tree.command(name="balance", description="How many uploads an account has left")
-@app_commands.describe(email="The email you registered with on codec399")
+@app_commands.describe(email="The email you registered with on Ghost Marketing")
 async def balance(interaction: discord.Interaction, email: str):
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
         account = await asyncio.to_thread(lookup_account, email.strip().lower())
     except RuntimeError:
-        await interaction.followup.send("❌ Could not reach codec399 right now.", ephemeral=True)
+        await interaction.followup.send("❌ Could not reach Ghost Marketing right now.", ephemeral=True)
         return
     if account is None:
         await interaction.followup.send(f"That email is not registered. Register at {register_url()}.", ephemeral=True)
