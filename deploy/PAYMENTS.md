@@ -39,7 +39,9 @@ Your values (looked up with your API key on 2026-10-29; none of these is a secre
 
 | Setting | Value |
 |---|---|
-| `CODEC399_PUBLIC_URL` | `https://ghostrus.xyz` |
+| `CODEC399_PUBLIC_URL` | `https://ghostrus.xyz` (VPS srv1739797, 2.25.183.193) |
+| `DISCORD_GUILD_ID` | `1565025145188388914` (GhostRUs) |
+| `DISCORD_TICKET_CATEGORY_ID` | unset: the server has no ticket category yet, so tickets are matched by the `ticket-` name prefix |
 | `WHOP_COMPANY_ID` | `biz_q8U4sOdwLgmqk5` (Ghost Marketing) |
 | `WHOP_PRODUCT_ID` | `prod_obWrOW3bzzOBD` (the product currently titled "Silver - 1 Ad") |
 | `WHOP_API_KEY` | the key in your `whop api-key.txt` file (never commit it; it goes in `/etc/codec399.env` only) |
