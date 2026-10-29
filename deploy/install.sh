@@ -48,6 +48,31 @@ nginx -t
 
 systemctl daemon-reload
 systemctl enable codec399 >/dev/null
+# A restart would kill encodes in progress (they are re-queued and started over on boot, but the
+# time is lost), so by default wait for them: `drain` stops the app starting new encodes, and the
+# restart happens once no job is processing.  CODEC399_RESTART_NOW=1 skips the wait.
+DRAIN="$DATA/drain"
+trap 'rm -f "$DRAIN"' EXIT
+if systemctl is-active --quiet codec399 && [ "${CODEC399_RESTART_NOW:-0}" != "1" ]; then
+    touch "$DRAIN"
+    while python3 - "$DATA" <<'PY'
+import glob, json, os, sys
+busy = []
+for meta in glob.glob(os.path.join(sys.argv[1], "*", "meta.json")):
+    try:
+        job = json.load(open(meta, encoding="utf-8"))
+    except (OSError, ValueError):
+        continue
+    if job.get("status") == "processing":
+        busy.append(job.get("name") or meta)
+if busy:
+    print("Waiting for " + str(len(busy)) + " running encode(s) before restarting: " + ", ".join(busy)[:200]
+          + "   (set CODEC399_RESTART_NOW=1 to restart at once)")
+sys.exit(0 if busy else 1)
+PY
+    do sleep 30; done
+    rm -f "$DRAIN"
+fi
 systemctl restart codec399
 systemctl reload nginx
 # The Discord bot runs only once its token is in the env file (see deploy/PAYMENTS.md).

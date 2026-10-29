@@ -113,7 +113,11 @@ also add credits or toggle Gold on the Approval tab (or `manage.py credits` / `m
 cd /root/codec399 && git pull && bash deploy/install.sh codec.yourdomain.com
 ```
 
-A restart cancels any encode in progress; finished outputs in `/var/lib/codec399` survive.
+The installer waits for running encodes to finish before it restarts the service (it drops a
+`drain` file in `/var/lib/codec399` so no new encode starts meanwhile; `CODEC399_RESTART_NOW=1`
+restarts at once). Jobs are recorded on disk from the moment they are uploaded, so a restart of any
+kind puts queued and interrupted jobs back in the queue; an interrupted encode starts over.
+Finished outputs in `/var/lib/codec399` survive.
 
 ## Operating
 

@@ -25,6 +25,12 @@ import whop  # noqa: E402
 import whop_api  # noqa: E402
 import app as webapp  # noqa: E402
 
+# Another test module may have imported these first, before the environment above was set.
+whop.SECRET = "ws_testsecret"
+webapp.BOT_TOKEN = "bot-secret"
+whop_api.API_KEY, whop_api.COMPANY_ID, whop_api.PRODUCT_ID = "key_test", "biz_test", "prod_test"
+whop_api.PUBLIC_URL = "https://codec.example.com"
+
 
 class CheckoutBodies(unittest.TestCase):
     def test_ads_variant_body(self):

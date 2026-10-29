@@ -61,12 +61,28 @@ def _public(job):
 
 
 def _save_meta(job):
-    with open(os.path.join(JOBS_DIR, job["id"], "meta.json"), "w", encoding="utf-8") as fh:
-        json.dump(_public(job), fh)
+    """Write the job's record next to its files.  Written when the job is created and at every status
+    change, so a restart can pick queued and half-done encodes up again (see _load_existing)."""
+    record = _public(job)
+    record.update(ext=job.get("ext"), owner_role=job.get("owner_role"))
+    path = os.path.join(JOBS_DIR, job["id"], "meta.json")
+    with open(path + ".tmp", "w", encoding="utf-8") as fh:
+        json.dump(record, fh)
+    os.replace(path + ".tmp", path)
+
+
+def _draining():
+    """While `drain` exists in the jobs directory no new encode is started; the installer creates it so
+    it can wait for running encodes to finish and restart the service without losing anything."""
+    return os.path.exists(os.path.join(JOBS_DIR, "drain"))
 
 
 def _load_existing():
-    for jid in os.listdir(JOBS_DIR):
+    """Reload finished jobs, and put back in the queue every job that was queued or encoding when the
+    service last stopped.  Their uploads are still on disk (an upload is only deleted once its job
+    ends), so a restart costs the time already spent on the encode, never the job."""
+    revived = 0
+    for jid in sorted(os.listdir(JOBS_DIR)):
         meta = os.path.join(JOBS_DIR, jid, "meta.json")
         if not os.path.isfile(meta):
             continue
@@ -75,8 +91,25 @@ def _load_existing():
                 job = json.load(fh)
         except (OSError, ValueError):
             continue
-        if job.get("status") == "done" and os.path.isfile(os.path.join(JOBS_DIR, jid, "output.mp4")):
+        status = job.get("status")
+        if status == "done" and os.path.isfile(os.path.join(JOBS_DIR, jid, "output.mp4")):
             jobs[jid] = job
+        elif status in ("queued", "processing"):
+            src = os.path.join(JOBS_DIR, jid, "input" + (job.get("ext") or ".mp4"))
+            if not os.path.isfile(src):
+                job.update(status="error", stage="error", error="The upload was lost in a restart.", finished=time.time())
+                _save_meta(job)
+                jobs[jid] = job
+                continue
+            job.update(status="queued", stage="queued", progress=0.0, started=None, finished=None, error=None,
+                       cancel=threading.Event(), restarted=int(job.get("restarted") or 0) + 1)
+            job.setdefault("created", time.time())
+            jobs[jid] = job
+            _save_meta(job)
+            _enqueue(job)
+            revived += 1
+    if revived:
+        print(f"codec399: {revived} job(s) put back in the queue after the restart", flush=True)
 
 
 def _run(job):
@@ -92,6 +125,7 @@ def _run(job):
     with lock:
         job["status"] = "processing"
         job["started"] = time.time()
+    _save_meta(job)
     try:
         summary = pipeline.process(src, dst, on_progress, fast=job["fast"], cancel=job["cancel"],
                                    encode_audio=bool(job.get("encode_audio")))
@@ -128,7 +162,7 @@ def _dispatcher():
     while True:
         with lock:
             free = len(running) < max(1, int(settings.get("concurrent_jobs")))
-        if not free:
+        if not free or _draining():
             time.sleep(0.5)
             continue
         try:
@@ -485,6 +519,7 @@ def create_job():
         job["credits_left"] = left
     with lock:
         jobs[jid] = job
+    _save_meta(job)
     _enqueue(job)
     return jsonify(_public(job)), 201
 

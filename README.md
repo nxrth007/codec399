@@ -101,7 +101,7 @@ upload limit, and accounts created with `manage.py`. See
 ## Tests
 
 ```bash
-python -m unittest tests.test_payments
+python -m unittest discover -s tests -t .
 ```
 
 ## Command line
