@@ -1,0 +1,20 @@
+[Unit]
+Description=codec399 Discord bot (pricing panel, Whop checkout links)
+After=network-online.target codec399.service
+Wants=network-online.target
+
+[Service]
+User=codec399
+Group=codec399
+WorkingDirectory=/opt/codec399
+EnvironmentFile=/etc/codec399.env
+ExecStart=/opt/codec399/.venv/bin/python discord_bot.py
+Restart=always
+RestartSec=5
+Nice=5
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

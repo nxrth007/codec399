@@ -7,8 +7,10 @@ Encodes are long and use every core, so this is a dedicated-machine deployment, 
 
 | File | Purpose |
 |---|---|
-| `install.sh` | One-shot installer and updater: apt packages (ffmpeg with libvpx-vp9, nginx), system user, venv, env file, systemd unit, nginx site |
+| `install.sh` | One-shot installer and updater: apt packages (ffmpeg with libvpx-vp9, nginx), system user, venv, env file, systemd units, nginx site |
 | `codec399.service` | systemd unit running gunicorn with one worker and eight threads on 127.0.0.1:5399 |
+| `codec399-bot.service` | systemd unit for the Discord bot (`discord_bot.py`); started only when `DISCORD_BOT_TOKEN` is set |
+| `PAYMENTS.md` | Step-by-step setup of the Whop webhook, API key and the Discord bot |
 | `nginx.conf` | Reverse proxy with a 16 GB upload limit, streaming uploads and downloads, hour-long timeouts |
 | `codec399.env.example` | Settings the service reads from `/etc/codec399.env` |
 | `requirements-server.txt` | App requirements plus gunicorn |
@@ -27,6 +29,9 @@ The app itself reads these environment variables:
 | `CODEC399_USER_MAX_SECONDS` | User uploads longer than this are refused, default 360 (6:00); admins have no cap |
 | `CODEC399_USER_MAX_BATCH` | Videos a user may upload per batch, default 8 |
 | `CODEC399_WHOP_WEBHOOK_SECRET` | Secret of the Whop webhook that posts to `/api/whop/webhook`; unset, the endpoint answers 503 |
+| `CODEC399_BOT_TOKEN` | Shared secret the Discord bot presents to `/api/bot/account`; unset, that endpoint answers 503 |
+| `DISCORD_NOTIFY_WEBHOOK` | Optional Discord channel webhook; every Whop payment is announced there |
+| `WHOP_*`, `DISCORD_*`, `CODEC399_PUBLIC_URL` | Checkout creation and the bot; see [PAYMENTS.md](PAYMENTS.md) |
 
 The last four are starting values: admins change them on the Settings tab of the encoder screen,
 and the saved values in `/var/lib/codec399/settings.json` win over the environment.
@@ -91,7 +96,9 @@ and `restore`). Addresses are read from nginx's forwarded header, so keep `CODEC
 ## Payments and upload credits
 
 Every non-admin account has a balance of upload credits (one per uploaded video) or Gold
-(unlimited). A paid Whop order credits the account: the Discord bot creates a Whop checkout with
+(unlimited). A paid Whop order credits the account: the Discord bot (`discord_bot.py`, set up in
+[PAYMENTS.md](PAYMENTS.md)) posts the pricing in every ticket, checks that the email is registered
+(`/api/bot/account`), and creates a Whop checkout with
 metadata `{"email": <registered email>, "ads": N}` or `{"email": ..., "gold": true}`, Whop
 sends `payment.succeeded` to `https://<domain>/api/whop/webhook`, and `whop.py` verifies the
 signature, approves the account if it is still pending, and adds the credits. Gold is monthly: each

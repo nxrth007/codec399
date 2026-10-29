@@ -33,6 +33,7 @@ if [ ! -f "$ENV" ]; then
 fi
 
 install -m 644 "$APP/deploy/codec399.service" /etc/systemd/system/codec399.service
+install -m 644 "$APP/deploy/codec399-bot.service" /etc/systemd/system/codec399-bot.service
 SITE=/etc/nginx/sites-available/codec399
 if [ -f "$SITE" ] && grep -q "managed by Certbot" "$SITE"; then
     # certbot --nginx has added the HTTPS server block and redirect to this file; rewriting it
@@ -49,6 +50,15 @@ systemctl daemon-reload
 systemctl enable codec399 >/dev/null
 systemctl restart codec399
 systemctl reload nginx
+# The Discord bot runs only once its token is in the env file (see deploy/PAYMENTS.md).
+if grep -Eq '^DISCORD_BOT_TOKEN=.+' "$ENV"; then
+    systemctl enable codec399-bot >/dev/null
+    systemctl restart codec399-bot
+    echo "Discord bot restarted; check: journalctl -u codec399-bot -f"
+else
+    systemctl disable --now codec399-bot >/dev/null 2>&1 || true
+    echo "DISCORD_BOT_TOKEN is not set in $ENV, so the Discord bot is not running (deploy/PAYMENTS.md)."
+fi
 
 echo
 echo "codec399 is running behind nginx on port 80 (server_name $DOMAIN)."

@@ -8,7 +8,9 @@ Flow: the Discord bot creates a Whop checkout with metadata {"email": ..., "ads"
 
 Set CODEC399_WHOP_WEBHOOK_SECRET to the secret Whop shows for the webhook (`ws_...`).  Until it is
 set the endpoint answers 503 and nothing is credited.  Every event is appended to whop_events.log
-next to the accounts file so an unexpected payload can be inspected.
+next to the accounts file so an unexpected payload can be inspected.  With DISCORD_NOTIFY_WEBHOOK set
+to a Discord channel webhook URL, every credited payment (and every one that could not be matched) is
+posted there so staff see it in the server.
 """
 import base64
 import hashlib
@@ -17,6 +19,7 @@ import json
 import os
 import threading
 import time
+import urllib.request
 
 import auth
 
@@ -24,6 +27,7 @@ SECRET = os.environ.get("CODEC399_WHOP_WEBHOOK_SECRET", "")
 DATA_DIR = os.path.dirname(auth.USERS_FILE) or "."
 SEEN_FILE = os.path.join(DATA_DIR, "whop_seen.json")
 LOG_FILE = os.path.join(DATA_DIR, "whop_events.log")
+NOTIFY_WEBHOOK = os.environ.get("DISCORD_NOTIFY_WEBHOOK", "")
 TOLERANCE = 5 * 60
 _lock = threading.Lock()
 
@@ -96,6 +100,23 @@ def _log(line):
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(LOG_FILE, "a", encoding="utf-8") as fh:
         fh.write(time.strftime("%Y-%m-%d %H:%M:%S ") + line + "\n")
+
+
+def _notify(text):
+    """Post a line to the staff Discord channel, in the background; failures only go to the log."""
+    if not NOTIFY_WEBHOOK:
+        return
+
+    def post():
+        req = urllib.request.Request(NOTIFY_WEBHOOK, data=json.dumps({"content": text[:1900],
+                                     "allowed_mentions": {"parse": []}}).encode(),
+                                     headers={"Content-Type": "application/json", "User-Agent": "codec399/1.0"})
+        try:
+            urllib.request.urlopen(req, timeout=10).close()
+        except Exception as exc:  # noqa: BLE001 - never let a notification break the webhook
+            _log(f"discord notify failed: {exc}")
+
+    threading.Thread(target=post, daemon=True).start()
 
 
 def _find(d, *keys):
@@ -183,6 +204,7 @@ def handle(raw_body, headers):
         order = extract_order(event)
         if not order["email"]:
             _log(f"{msg_id}: no email in metadata or payment; nothing credited")
+            _notify(f"⚠️ Whop payment {order['payment_id']} ({order['amount']} {order['currency']}) carried no email; nothing credited.")
             return 200, "No email on the payment; nothing credited."
         if not order["ads"] and not order["gold"]:
             _log(f"{msg_id}: no ads/gold in metadata; nothing credited")
@@ -192,6 +214,11 @@ def handle(raw_body, headers):
                                          note=f"whop {order['payment_id']} {order['amount']} {order['currency']}")
         except ValueError as exc:
             _log(f"{msg_id}: {exc}")
+            _notify(f"⚠️ Whop payment {order['payment_id']} ({order['amount']} {order['currency']}): {exc}")
             return 200, str(exc)
         _log(f"{msg_id}: credited {order['email']} ads={order['ads']} gold={order['gold']} -> {result}")
+        what = "Gold (monthly)" if order["gold"] else f"{order['ads']} ad upload{'s' if order['ads'] != 1 else ''}"
+        who = f" <@{order['metadata'].get('discord_id')}>" if order["metadata"].get("discord_id") else ""
+        _notify(f"✅ Paid: {what} for `{order['email']}`{who} ({order['amount']} {order['currency']}). "
+                f"Account {result['status']}, {'Gold' if result['gold'] else str(result['credits']) + ' uploads left'}.")
         return 200, "Credited."

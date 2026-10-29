@@ -72,8 +72,9 @@ different port.
    A `media_buyer` account gets these three tabs too but sees, downloads and removes only its own
    jobs. Admins can revoke an account from the Approval tab, which also blocks registrations from the
    addresses it used, and restore it later. Non-admin accounts spend one upload credit per video
-   (or hold Gold for unlimited); credits come from Whop payments via `/api/whop/webhook` or from an
-   admin on the Approval tab. New users register from the
+   (or hold Gold for unlimited); credits come from Whop payments via `/api/whop/webhook` (sold by the Discord bot in
+   `discord_bot.py`, which posts $25-per-ad and $1,500-a-month Gold checkout links in every ticket;
+   see [deploy/PAYMENTS.md](deploy/PAYMENTS.md)) or from an admin on the Approval tab. New users register from the
    sign-in page and wait in the admin's **Approval** tab until accepted.
 2. **Processing** tab: progress bar with a time estimate. Two jobs run at a time by default (a
    Settings-tab value) and admin jobs start first; the rest queue.
@@ -96,6 +97,12 @@ deleted once a job finishes.
 `deploy/` holds a one-shot installer for an Ubuntu VPS: gunicorn under systemd, nginx with a 16 GB
 upload limit, and accounts created with `manage.py`. See
 [deploy/README.md](deploy/README.md).
+
+## Tests
+
+```bash
+python -m unittest tests.test_payments
+```
 
 ## Command line
 

@@ -1,4 +1,5 @@
 """codec399 web app: upload a video, run the methodology, download the result."""
+import hmac
 import itertools
 import json
 import os
@@ -141,7 +142,9 @@ def _dispatcher():
         threading.Thread(target=_run_and_release, args=(job,), daemon=True).start()
 
 
-PUBLIC_ENDPOINTS = {"login", "register", "static", "whop_webhook"}
+PUBLIC_ENDPOINTS = {"login", "register", "static", "whop_webhook", "bot_account"}
+# Shared secret the Discord bot sends as a Bearer token to look accounts up before selling credits.
+BOT_TOKEN = os.environ.get("CODEC399_BOT_TOKEN", "")
 DISCORD_INVITE = "https://discord.gg/peEY87MCu"
 
 
@@ -313,6 +316,23 @@ def whop_webhook():
     """Whop calls this on payment.succeeded; see whop.py.  Public, authenticated by signature."""
     status, message = whop.handle(request.get_data(), {k.lower(): v for k, v in request.headers.items()})
     return jsonify({"message": message}), status
+
+
+@app.get("/api/bot/account")
+def bot_account():
+    """The Discord bot asks whether an email is registered before it hands out a checkout link.
+    Public, authenticated by CODEC399_BOT_TOKEN; answers 404 for an unknown email."""
+    if not BOT_TOKEN:
+        return jsonify({"error": "CODEC399_BOT_TOKEN is not configured."}), 503
+    header = request.headers.get("Authorization", "")
+    if not hmac.compare_digest(header, f"Bearer {BOT_TOKEN}"):
+        return jsonify({"error": "Bad token."}), 401
+    email = (request.args.get("email") or "").strip().lower()
+    user = auth.load_users().get(email) if email else None
+    if user is None:
+        return jsonify({"error": "No account with that email."}), 404
+    return jsonify({"email": email, "role": user.get("role", "user"), "status": user.get("status", "active"),
+                    "credits": int(user.get("credits") or 0), "gold": auth.is_gold(user)})
 
 
 @app.post("/api/accounts/<path:email>/revoke")
