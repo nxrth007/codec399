@@ -168,7 +168,7 @@
       <span class="meta" id="upload-status"></span>
     </div>
     <div class="warn" id="upload-warn" hidden><b>Keep this tab open</b> until every video has uploaded. You can use other tabs or windows meanwhile; closing this one stops the uploads still in progress. Encoding then runs on the server on its own.</div>
-    <p class="note">Faithful mode is a two-pass encode at roughly 12 slots per second for a 1080x1920 source, so a two minute clip takes about an hour. Two jobs encode at once by default (see Settings); admin jobs start before everyone else's.</p>
+    <p class="note">Faithful mode is a two-pass encode; a two minute 1080x1920 clip takes about an hour. Two jobs encode at once by default (see Settings); admin jobs start before everyone else's.</p>
   </section>
 
   <section id="tab-processing"><div id="processing-list"></div></section>
@@ -281,7 +281,7 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&l
 function stageText(j) {
   if (j.status === 'queued') return 'Waiting in queue';
   if (j.progress > 0.999) return 'Finishing the container';
-  if (j.stage === 'preparing') return 'Counting frames and building the mosaic reference frame';
+  if (j.stage === 'preparing') return 'Preparing the video';
   if (j.stage === 'audio') return 'Encoding the soundtrack';
   if (j.stage === 'analysing' || j.stage === 'encoding') {
     let t = `${j.stage === 'analysing' ? 'First pass (analysis)' : 'Second pass (encoding)'}: ${Math.round(j.progress * 100)}%`;
@@ -296,10 +296,7 @@ function card(j) {
   let body = `<div class="top"><div class="name" title="${esc(j.name)}">${esc(j.name)}</div><div class="meta">${fmtBytes(j.input_bytes)}${j.fast ? (j.fast_auto ? ' · fast (auto, over ' + (limits.auto_fast_seconds == null ? 'limit' : mmss(limits.auto_fast_seconds)) + ')' : ' · fast') : ''}${j.encode_audio ? ' · audio' : ''}${j.owner ? ' · ' + esc(j.owner) : ''}</div></div>`;
   if (j.status === 'done') {
     body += `<dl>
-      <dt>Output</dt><dd>${esc(j.output_name)} · ${fmtBytes(s.output_bytes)}</dd>
-      <dt>Stream</dt><dd>${s.width}x${s.height}, 399 fps VP9, ${s.slots} slots (${fmtTime(s.output_duration)})</dd>
-      <dt>Source frames</dt><dd>${s.source_frames} at 30 fps, each shown for one slot</dd>
-      <dt>Mosaic</dt><dd>${s.block_px} px blocks from the frame at ${Number(s.mosaic_ref_time).toFixed(2)} s</dd>
+      <dt>Output</dt><dd>${esc(j.output_name)} · ${fmtBytes(s.output_bytes)}${s.width ? ` · ${s.width}x${s.height}` : ''}${s.output_duration ? ` · ${fmtTime(s.output_duration)}` : ''}</dd>
       ${s.has_audio ? `<dt>Audio</dt><dd>${s.encode_audio ? 'Encode Audio applied, then AAC' : 'Original soundtrack, AAC'}</dd>` : ''}
       <dt>Took</dt><dd>${fmtTime((j.finished || 0) - (j.started || 0))}</dd>
       ${metaVideoText(j.meta) ? `<dt>Meta</dt><dd>${metaVideoText(j.meta)}</dd>` : ''}
