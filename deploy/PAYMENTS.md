@@ -22,6 +22,7 @@ member pays on Whop ──► Whop sends payment.succeeded to https://<site>/api
                             ▼
 codec399 approves the account if it was still pending and adds the credits
                             │  one credit per upload; Gold = unlimited for 31 days per payment
+                            │  (every new registration already starts with one free upload: WELCOME_CREDITS in auth.py)
                             ▼
 member signs in, Upload is enabled for exactly the number of ads paid for
 (staff see "✅ Paid: 4 ad uploads for buyer@example.com" in the notify channel)

@@ -247,8 +247,14 @@ def add_user(email, password, role="user"):
         _save_users(users)
 
 
+# Upload credits every new registration starts with, so a new member can try one video before
+# buying more in the Discord.  Existing accounts are not touched when this changes.
+WELCOME_CREDITS = 1
+
+
 def register(email, password, portfolio_id, ip=None):
-    """Self-registration from the Register page: a pending `user` account awaiting approval."""
+    """Self-registration from the Register page: a pending `user` account awaiting approval, with
+    WELCOME_CREDITS uploads to start."""
     email = _normalise(email)
     _check_email(email)
     _check_password(password)
@@ -264,7 +270,8 @@ def register(email, password, portfolio_id, ip=None):
         if email in users:
             raise ValueError("An account with that email already exists.")
         users[email] = {"hash": generate_password_hash(password), "role": "user", "status": "pending",
-                        "portfolio_id": portfolio_id, "created": time.time(), "ips": [ip] if ip else []}
+                        "portfolio_id": portfolio_id, "created": time.time(), "ips": [ip] if ip else [],
+                        "credits": WELCOME_CREDITS}
         _save_users(users)
 
 

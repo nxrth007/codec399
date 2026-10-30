@@ -104,7 +104,7 @@ class BotAccountEndpoint(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         data = r.get_json()
         self.assertEqual(data["status"], "pending")
-        self.assertEqual(data["credits"], 0)
+        self.assertEqual(data["credits"], auth.WELCOME_CREDITS)   # the free first upload
         self.assertFalse(data["gold"])
 
 
@@ -129,11 +129,11 @@ class WebhookCredits(unittest.TestCase):
         self.assertEqual(r.get_json()["message"], "Credited.")
         user = auth.get_user("buyer@example.com")
         self.assertEqual(user["status"], "active")
-        self.assertEqual(user["credits"], 3)
+        self.assertEqual(user["credits"], 3 + auth.WELCOME_CREDITS)
         # The same delivery again changes nothing.
         r = self._deliver(event, "msg_1")
         self.assertEqual(r.get_json()["message"], "Duplicate delivery ignored.")
-        self.assertEqual(auth.get_user("buyer@example.com")["credits"], 3)
+        self.assertEqual(auth.get_user("buyer@example.com")["credits"], 3 + auth.WELCOME_CREDITS)
 
     def test_gold_payment(self):
         auth.add_user("gold@example.com", "password123")

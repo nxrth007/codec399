@@ -70,6 +70,17 @@ class DeleteAccount(unittest.TestCase):
         self.assertIsNotNone(auth.account(self.admin))
         self.assertIsNotNone(auth.account(self.other_admin))
 
+    def test_new_registrations_start_with_one_free_upload(self):
+        email = f"fresh-{id(self)}@example.com"
+        auth.register(email, "Str0ngPassw0rd!", "pf-9", "10.0.2.2")
+        try:
+            self.assertEqual(auth.WELCOME_CREDITS, 1)
+            self.assertEqual(auth.account(email)["credits"], 1)
+            auth.approve(email, "user")
+            self.assertEqual(auth.entitlement(email), (False, 1))
+        finally:
+            auth.remove_user(email)
+
     def test_media_buyers_may_not_delete(self):
         self._as(self.buyer)
         self.assertEqual(self.client.delete(f"/api/accounts/{self.victim}").status_code, 403)
