@@ -596,6 +596,22 @@ def restore_account(email):
         return jsonify({"error": str(exc)}), 400
 
 
+@app.delete("/api/accounts/<path:email>")
+def delete_account(email):
+    """Remove an account for good (its finished videos stay).  Admins are managed in users.json, and
+    nobody deletes the account they are signed in with."""
+    _admin_only()
+    target = auth.account(email)
+    if target is None:
+        return jsonify({"error": "No account with that email."}), 404
+    if target["email"] == g.user["email"]:
+        return jsonify({"error": "You cannot delete the account you are signed in with."}), 400
+    if target["role"] == "admin":
+        return jsonify({"error": "Admin accounts cannot be deleted here."}), 400
+    auth.remove_user(target["email"])
+    return jsonify({"email": target["email"], "deleted": True})
+
+
 @app.post("/api/accounts/<path:email>/role")
 def change_role(email):
     _admin_only()

@@ -111,6 +111,8 @@
   .acct .btns { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
   .acct input.n { width:70px; background:var(--panel); color:var(--text); border:0; border-bottom:1px solid var(--faint); padding:8px 4px; font:inherit; outline:none; border-radius:0; }
   .acct .bal b.gold { color:#f0c674; }
+  .acct button.trash { padding:8px 10px; display:inline-flex; align-items:center; }
+  .acct button.trash svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
   .balance { color:var(--muted); font-size:13px; margin:-6px 0 14px; }
   .balance b { color:var(--text); font-weight:500; }
   .balance b.gold { color:#f0c674; }
@@ -174,7 +176,7 @@
   <section id="tab-processing"><div id="processing-list"></div></section>
   <section id="tab-finished"><div id="finished-list"></div></section>
   {% if is_admin %}
-  <section id="tab-approval"><div id="approval-list"></div><h2 class="sub">Accounts</h2><p class="note">Media buyers see the Upload, Processing and Finished tabs with only their own jobs. Users get the upload dashboard. Revoking an account stops it signing in and blocks new registrations from the addresses it used; Reinstate undoes both.</p><div id="accounts-list"></div></section>
+  <section id="tab-approval"><div id="approval-list"></div><h2 class="sub">Accounts</h2><p class="note">Media buyers see the Upload, Processing and Finished tabs with only their own jobs. Users get the upload dashboard. Revoking an account stops it signing in and blocks new registrations from the addresses it used; Reinstate undoes both. The trash icon deletes an account outright.</p><div id="accounts-list"></div></section>
   <section id="tab-gallery"><div class="gallery-bar"><button type="button" class="rm" id="meta-sync">Sync to Meta</button><span class="msg" id="meta-msg">Each finished video is marked when it reaches the client's folder in the Meta Media Library, by the sync, an agent, or you.</span></div><div id="gallery-folders" class="folders"></div><div id="gallery-folder" hidden></div></section>
   <section id="tab-settings"><div class="settings">
     <div class="setting">
@@ -367,16 +369,20 @@ function approvalCard(r) {
 }
 const ROLE_LABEL = { user: 'user', media_buyer: 'media buyer' };
 let confirmRevoke = null;   // email whose revoke confirmation is open
+let confirmDelete = null;   // email whose delete confirmation is open
+const TRASH = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
 function accountCard(a) {
   const other = a.role === 'media_buyer' ? 'user' : 'media_buyer';
   const revoked = a.status === 'revoked';
+  const trash = `<button class="no trash" data-account="${esc(a.email)}" data-action="ask-delete" title="Delete account" aria-label="Delete account ${esc(a.email)}">${TRASH}</button>`;
   const bal = a.gold ? `<b class="gold">Gold</b> · unlimited${a.gold_manual ? '' : ' until ' + esc(fmtDate(a.gold_until))}` : `uploads left: <b>${a.credits}</b>`;
   const head = `<div><div class="name" title="${esc(a.email)}">${esc(a.email)}</div><div class="role">Role: <b>${ROLE_LABEL[a.role] || esc(a.role)}</b>${a.portfolio_id ? ' · ' + esc(a.portfolio_id) : ''} · <span class="bal">${bal}</span>${revoked ? ` · <b class="revoked">access revoked</b> ${esc(fmtDate(a.revoked))}` : ''}</div></div>`;
   const btns = revoked
-    ? `<div class="btns"><button class="ok" data-account="${esc(a.email)}" data-action="restore">Reinstate access</button></div>`
-    : `<div class="btns"><input class="n" type="number" step="1" placeholder="+ uploads" aria-label="Uploads to add" data-credits-for="${esc(a.email)}"><button class="rm" data-account="${esc(a.email)}" data-action="credits">Add</button><button class="rm" data-account="${esc(a.email)}" data-action="gold" data-gold="${a.gold_manual ? 'false' : 'true'}">${a.gold_manual ? 'Gold off' : 'Gold on'}</button><button class="rm" data-account="${esc(a.email)}" data-role="${other}">Make ${ROLE_LABEL[other]}</button><button class="no" data-account="${esc(a.email)}" data-action="ask-revoke">Revoke access</button></div>`;
-  const ask = confirmRevoke === a.email ? `<div class="confirm"><p>Are you sure you want to revoke access for <b>${esc(a.email)}</b>?</p><p class="meta">They will not be able to sign in, any open session ends on its next request, ${a.ips.length ? `and new registrations from the ${a.ips.length} address${a.ips.length === 1 ? '' : 'es'} this account was seen from will be refused.` : 'and no network block applies yet because no address is on record for this account (addresses are recorded at each sign-in).'} Their finished videos stay in the Gallery. You can reinstate access later.</p><div class="btns"><button class="no" data-account="${esc(a.email)}" data-action="revoke">Yes, revoke</button><button class="rm" data-action="cancel-revoke">Cancel</button></div></div>` : '';
-  return `<div class="card acct">${head}${btns}${ask}</div>`;
+    ? `<div class="btns"><button class="ok" data-account="${esc(a.email)}" data-action="restore">Reinstate access</button>${trash}</div>`
+    : `<div class="btns"><input class="n" type="number" step="1" placeholder="+ uploads" aria-label="Uploads to add" data-credits-for="${esc(a.email)}"><button class="rm" data-account="${esc(a.email)}" data-action="credits">Add</button><button class="rm" data-account="${esc(a.email)}" data-action="gold" data-gold="${a.gold_manual ? 'false' : 'true'}">${a.gold_manual ? 'Gold off' : 'Gold on'}</button><button class="rm" data-account="${esc(a.email)}" data-role="${other}">Make ${ROLE_LABEL[other]}</button><button class="no" data-account="${esc(a.email)}" data-action="ask-revoke">Revoke access</button>${trash}</div>`;
+  const askDelete = confirmDelete === a.email ? `<div class="confirm"><p>Delete the account <b>${esc(a.email)}</b>?</p><p class="meta">This removes the account for good: they are signed out on their next request and would have to register again from scratch. Their finished videos stay in the Gallery. Unlike revoking, nothing blocks their addresses afterwards.</p><div class="btns"><button class="no" data-account="${esc(a.email)}" data-action="delete">Yes, delete</button><button class="rm" data-action="cancel-delete">Cancel</button></div></div>` : '';
+  const askRevoke = confirmRevoke === a.email ? `<div class="confirm"><p>Are you sure you want to revoke access for <b>${esc(a.email)}</b>?</p><p class="meta">They will not be able to sign in, any open session ends on its next request, ${a.ips.length ? `and new registrations from the ${a.ips.length} address${a.ips.length === 1 ? '' : 'es'} this account was seen from will be refused.` : 'and no network block applies yet because no address is on record for this account (addresses are recorded at each sign-in).'} Their finished videos stay in the Gallery. You can reinstate access later.</p><div class="btns"><button class="no" data-account="${esc(a.email)}" data-action="revoke">Yes, revoke</button><button class="rm" data-action="cancel-revoke">Cancel</button></div></div>` : '';
+  return `<div class="card acct">${head}${btns}${askDelete || askRevoke}</div>`;
 }
 
 function renderGallery(folders) {
@@ -433,6 +439,9 @@ document.addEventListener('click', async (e) => {
     const a = act.dataset.action, email = act.dataset.account;
     if (a === 'ask-revoke') { confirmRevoke = email; refresh(); return; }
     if (a === 'cancel-revoke') { confirmRevoke = null; refresh(); return; }
+    if (a === 'ask-delete') { confirmDelete = email; confirmRevoke = null; refresh(); return; }
+    if (a === 'cancel-delete') { confirmDelete = null; refresh(); return; }
+    if (a === 'delete') { act.disabled = true; await fetch('/api/accounts/' + encodeURIComponent(email), { method: 'DELETE' }); confirmDelete = null; refresh(); return; }
     if (a === 'credits') {
       const input = document.querySelector(`input[data-credits-for="${CSS.escape(email)}"]`); const n = parseInt(input.value, 10);
       if (!n) { input.focus(); return; }
